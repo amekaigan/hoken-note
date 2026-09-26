@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F5F7">
+<title>家族の保険ノート</title>
+<style>
+:root{
+  --paper:#F2F5F7; --sheet:#FFFFFF; --ink:#1B2530; --sub:#5B6875; --line:#D8DFE5;
+  --ai:#1F3A5F; --ai-soft:#E3EAF2; --take:#2F7A55; --take-soft:#E2F1E8; --due:#B8412A; --due-soft:#F7E4DF;
+  --r-sm:6px; --r-md:12px;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",system-ui,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root{--paper:#11171D;--sheet:#1A222B;--ink:#E6ECF1;--sub:#9AA7B3;--line:#2C3845;
+  --ai:#8FB3DB;--ai-soft:#22324A;--take:#6CC39A;--take-soft:#1E3A2D;--due:#E98C75;--due-soft:#402520;}
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.6;-webkit-text-size-adjust:100%}
+body{padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}
+main{max-width:640px;margin:0 auto;padding:16px 16px 24px}
+h1{font-size:1.5rem;line-height:1.3;margin:8px 0 16px;letter-spacing:.02em}
+h2{font-size:1.1rem;margin:28px 0 10px}
+p{margin:0 0 12px}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.sub{color:var(--sub);font-size:.875rem}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--ai);outline-offset:2px}
+
+/* tab bar */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;background:var(--sheet);border-top:1px solid var(--line);
+  display:flex;justify-content:space-around;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));z-index:10}
+nav.tabs a{flex:1;text-align:center;text-decoration:none;color:var(--sub);font-size:.72rem;padding:4px 0;border-radius:var(--r-sm)}
+nav.tabs a .ic{display:block;font-size:1.25rem;line-height:1.2}
+nav.tabs a[aria-current="page"]{color:var(--ai);font-weight:700}
+
+/* home summary: the ledger strip */
+.ledger{background:var(--ai);color:#fff;border-radius:var(--r-md);padding:18px 18px 16px}
+@media (prefers-color-scheme:dark){.ledger{color:#0F1A26}}
+.ledger .big{font-size:2rem;font-weight:700;line-height:1.2}
+.ledger .row{display:flex;gap:24px;margin-top:10px;font-size:.9rem;opacity:.92}
+
+.list{list-style:none;margin:0;padding:0;background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+.list li{border-top:1px solid var(--line)}
+.list li:first-child{border-top:0}
+.list a,.list .item{display:block;padding:12px 14px;text-decoration:none;color:inherit}
+.pol-top{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.pol-name{font-weight:700}
+.pol-grid{display:grid;grid-template-columns:auto 1fr;gap:0 12px;font-size:.85rem;color:var(--sub);margin-top:4px}
+.chip{display:inline-block;font-size:.75rem;padding:1px 8px;border-radius:999px;background:var(--ai-soft);color:var(--ai);white-space:nowrap}
+.chip.due{background:var(--due-soft);color:var(--due)}
+.chip.take{background:var(--take-soft);color:var(--take)}
+
+.empty{background:var(--sheet);border:1px dashed var(--line);border-radius:var(--r-md);padding:20px;text-align:center}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:var(--r-sm);
+  padding:10px 16px;background:var(--ai);color:#fff;font-weight:700;text-decoration:none;min-height:44px}
+@media (prefers-color-scheme:dark){.btn{color:#0F1A26}}
+.btn.ghost{background:transparent;color:var(--ai);border:1px solid var(--line)}
+.btn.danger{background:transparent;color:var(--due);border:1px solid var(--line)}
+.btn.block{width:100%}
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+.seg button{border:1px solid var(--line);background:var(--sheet);border-radius:999px;padding:4px 12px;font-size:.85rem;min-height:36px}
+.seg button[aria-pressed="true"]{background:var(--ai);color:#fff;border-color:var(--ai)}
+@media (prefers-color-scheme:dark){.seg button[aria-pressed="true"]{color:#0F1A26}}
+
+/* form */
+fieldset{border:0;margin:0 0 8px;padding:0}
+legend{font-weight:700;font-size:1rem;margin:22px 0 8px;padding:0}
+.f{display:block;margin:0 0 12px}
+.f span{display:block;font-size:.8rem;color:var(--sub);margin-bottom:3px}
+.f input,.f select,.f textarea{width:100%;background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;min-height:44px}
+.f textarea{min-height:80px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.hint{background:var(--ai-soft);color:var(--ai);border-radius:var(--r-sm);padding:10px 12px;font-size:.85rem;margin:0 0 12px}
+.saved{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);
+  font-size:.8rem;padding:4px 12px;border-radius:999px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20}
+.saved.on{opacity:.9}
+@media (prefers-reduced-motion:reduce){.saved{transition:none}}
+.cov-row{display:grid;grid-template-columns:1fr 1fr 40px;gap:8px;margin-bottom:8px}
+.cov-row button{border:1px solid var(--line);background:var(--sheet);border-radius:var(--r-sm)}
+.photos{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.photos figure{margin:0;position:relative}
+.photos img{width:96px;height:96px;object-fit:cover;border-radius:var(--r-sm);border:1px solid var(--line);display:block}
+.photos button{position:absolute;top:2px;right:2px;border:0;border-radius:999px;background:rgba(0,0,0,.6);color:#fff;width:26px;height:26px;font-size:.8rem}
+
+/* coverage map: the one memorable element — hanko-like marks */
+.map-wrap{overflow-x:auto;background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-md)}
+table.map{border-collapse:collapse;min-width:100%}
+.map th,.map td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:center;font-size:.8rem}
+.map thead th{position:sticky;top:0;background:var(--sheet);font-weight:600;color:var(--sub);white-space:nowrap}
+.map tbody th{text-align:left;white-space:nowrap;font-size:.9rem;padding-left:12px;position:sticky;left:0;background:var(--sheet)}
+.hanko{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;border:2px solid var(--due);color:var(--due);
+  font-weight:700;font-size:.8rem;transform:rotate(-8deg)}
+.hanko.multi{background:var(--due-soft)}
+.none{color:var(--line)}
+
+/* tax */
+.tax-card{background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-md);padding:14px;margin-bottom:12px}
+.tax-card h3{margin:0 0 6px;font-size:1rem}
+.tax-line{display:flex;justify-content:space-between;gap:12px;border-top:1px dotted var(--line);padding:6px 0;font-size:.9rem}
+.tax-line:first-of-type{border-top:0}
+.tax-total{display:flex;justify-content:space-between;align-items:baseline;border-top:2px solid var(--ink);margin-top:6px;padding-top:8px;font-weight:700}
+.tax-total .v{font-size:1.4rem}
+.warn{background:var(--due-soft);color:var(--due);border-radius:var(--r-sm);padding:10px 12px;font-size:.85rem;margin:0 0 12px}
+.note{font-size:.8rem;color:var(--sub)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}
+</style>
+</head>
+<body>
+<main id="app" aria-live="polite"></main>
+<div class="saved" id="saved" role="status">保存しました</div>
+<nav class="tabs" aria-label="メインメニュー">
+  <a href="#home" data-tab="home"><span class="ic" aria-hidden="true">◎</span>ホーム</a>
+  <a href="#list" data-tab="list"><span class="ic" aria-hidden="true">≡</span>保険一覧</a>
+  <a href="#map" data-tab="map"><span class="ic" aria-hidden="true">▦</span>保障マップ</a>
+  <a href="#tax" data-tab="tax"><span class="ic" aria-hidden="true">¥</span>年末調整</a>
+  <a href="#settings" data-tab="settings"><span class="ic" aria-hidden="true">⚙</span>設定</a>
+</nav>
+
+<script>
+"use strict";
+/* ========== 定義 ========== */
+const TYPES = ["生命保険","医療保険","がん保険","学資保険","個人年金","就業不能保険","介護保険","自動車保険","火災保険","地震保険","傷害保険","共済","その他"];
+const COVERS = ["死亡","入院","手術","がん","三大疾病","介護","就業不能","個人賠償","火災","地震","自動車","学資","年金","その他"];
+const FREQ = {month:"月払い", year:"年払い", once:"一時払い"};
+const DEDUCT = {general:"一般生命保険料", medical:"介護医療保険料", pension:"個人年金保険料", quake:"地震保険料", oldLong:"旧長期損害保険料", none:"控除の対象外"};
+const RELS = ["本人","配偶者","子","父","母","その他"];
+
+/* ========== 保存（IndexedDB） ========== */
+const DB_NAME = "hoken-note", STORE = "kv";
+function idb(){ return new Promise((res,rej)=>{ const r = indexedDB.open(DB_NAME,1);
+  r.onupgradeneeded = ()=> r.result.createObjectStore(STORE);
+  r.onsuccess = ()=> res(r.result); r.onerror = ()=> rej(r.error); }); }
+async function dbGet(key){ const db = await idb(); return new Promise((res,rej)=>{ const t = db.transaction(STORE).objectStore(STORE).get(key); t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error); }); }
+async function dbSet(key,val){ const db = await idb(); return new Promise((res,rej)=>{ const t = db.transaction(STORE,"readwrite"); t.objectStore(STORE).put(val,key); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+
+let S = { members:[], policies:[], photos:{}, settings:{ taxpayerId:"", taxYear:new Date().getFullYear() } };
+let saveTimer = null;
+function save(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{ await dbSet("state", S); flash("保存しました"); }
+    catch(e){ flash("保存できませんでした。容量を確認してください"); }
+  }, 300);
+}
+function flash(msg){ const el = document.getElementById("saved"); el.textContent = msg; el.classList.add("on"); clearTimeout(flash.t); flash.t = setTimeout(()=>el.classList.remove("on"),1200); }
+
+/* ========== 便利関数 ========== */
+const uid = ()=> Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const yen = n => (Math.round(Number(n)||0)).toLocaleString("ja-JP")+"円";
+const member = id => S.members.find(m=>m.id===id);
+const mname = id => member(id)?.name || "未設定";
+function annual(p){
+  if (p.annualOverride !== "" && p.annualOverride != null) return Number(p.annualOverride)||0;
+  const v = Number(p.premium)||0;
+  return p.freq==="month" ? v*12 : p.freq==="year" ? v : 0;
+}
+function ageAt(birth, date){ if(!birth) return null; const b = new Date(birth); let a = date.getFullYear()-b.getFullYear();
+  if (date.getMonth()<b.getMonth() || (date.getMonth()===b.getMonth() && date.getDate()<b.getDate())) a--; return a; }
+function daysUntil(d){ const t = new Date(); t.setHours(0,0,0,0); return Math.round((new Date(d)-t)/86400000); }
+function fmtDate(d){ if(!d) return ""; const x = new Date(d); return `${x.getFullYear()}年${x.getMonth()+1}月${x.getDate()}日`; }
+
+/* ========== 期限 ========== */
+function deadlines(){
+  const out = [];
+  for (const p of S.policies){
+    for (const [k,label] of [["maturity","満期"],["renewal","更新"],["payEnd","払込終了"]]){
+      if (p[k]) out.push({p, label, date:p[k], days:daysUntil(p[k])});
+    }
+  }
+  return out.filter(d=>d.days>=-30).sort((a,b)=>a.days-b.days);
+}
+
+/* ========== 控除計算（所得税・国税庁 No.1140 / No.1145） ========== */
+const ceil = Math.ceil;
+function calcNew(p){ if(p<=0) return 0; if(p<=20000) return p; if(p<=40000) return ceil(p/2+10000); if(p<=80000) return ceil(p/4+20000); return 40000; }
+function calcOld(p){ if(p<=0) return 0; if(p<=25000) return p; if(p<=50000) return ceil(p/2+12500); if(p<=100000) return ceil(p/4+25000); return 50000; }
+function calcCategory(newSum, oldSum){
+  if (oldSum<=0) return calcNew(newSum);
+  if (newSum<=0) return calcOld(oldSum);
+  return Math.max(calcOld(oldSum), Math.min(40000, calcNew(newSum)+calcOld(oldSum)));
+}
+function calcOldLong(p){ if(p<=0) return 0; if(p<=10000) return p; if(p<=20000) return ceil(p/2+5000); return 15000; }
+function taxSummary(){
+  const payer = S.settings.taxpayerId;
+  const target = S.policies.filter(p => p.deduct && p.deduct!=="none" && (!payer || p.payerId===payer));
+  const sum = {general:{n:0,o:0}, medical:{n:0,o:0}, pension:{n:0,o:0}, quake:0, oldLong:0};
+  const rows = [];
+  for (const p of target){
+    const cert = p.certAmount !== "" && p.certAmount != null ? Number(p.certAmount) : null;
+    const amt = cert ?? annual(p);
+    rows.push({p, amt, est:annual(p), cert});
+    if (p.deduct==="quake") sum.quake += amt;
+    else if (p.deduct==="oldLong") sum.oldLong += amt;
+    else if (sum[p.deduct]) sum[p.deduct][p.regime==="old"?"o":"n"] += amt;
+  }
+  const g = calcCategory(sum.general.n, sum.general.o);
+  const m = calcNew(sum.medical.n + sum.medical.o);
+  const y = calcCategory(sum.pension.n, sum.pension.o);
+  const life = Math.min(120000, g+m+y);
+  const quake = Math.min(50000, Math.min(50000, sum.quake) + calcOldLong(sum.oldLong));
+  // 令和8年以降の扶養特例（23歳未満の扶養親族）の対象になりうるか
+  const year = Number(S.settings.taxYear)||new Date().getFullYear();
+  const end = new Date(year,11,31);
+  const hasYoung = S.members.some(mb => mb.id!==payer && mb.dependent && ageAt(mb.birth,end)!==null && ageAt(mb.birth,end)<23);
+  const special = year>=2026 && hasYoung && sum.general.n>0;
+  return {rows, sum, g, m, y, life, quake, special};
+}
+
+/* ========== 画面 ========== */
+const app = document.getElementById("app");
+function setTab(name){ document.querySelectorAll("nav.tabs a").forEach(a=> a.dataset.tab===name ? a.setAttribute("aria-current","page") : a.removeAttribute("aria-current")); }
+
+function viewHome(){
+  setTab("home");
+  const total = S.policies.reduce((s,p)=>s+annual(p),0);
+  const dl = deadlines().slice(0,4);
+  const month = new Date().getMonth()+1;
+  const taxSeason = month>=9 && month<=12;
+  app.innerHTML = `
+  <h1>家族の保険ノート</h1>
+  <div class="ledger">
+    <div class="sub" style="color:inherit;opacity:.85">家族の保険 ${S.policies.length}件の年間保険料</div>
+    <div class="big num">${yen(total)}</div>
+    <div class="row"><span>家族 ${S.members.length}人</span><span>期限が近いもの ${deadlines().filter(d=>d.days<=90&&d.days>=0).length}件</span></div>
+  </div>
+  ${taxSeason ? `<h2>年末調整の時期です</h2><p class="sub">控除証明書が届いたら、金額を入れて照合しましょう。</p><a class="btn block" href="#tax">年末調整の準備をする</a>` : ""}
+  <h2>近い期限</h2>
+  ${dl.length ? `<ul class="list">${dl.map(d=>`<li><a href="#policy/${d.p.id}">
+      <div class="pol-top"><span class="pol-name">${esc(d.p.name||d.p.company||"名称未設定")}</span>
+      <span class="chip ${d.days<=90?"due":""}">${d.label} ${d.days<0?"過ぎています":d.days===0?"今日":`あと${d.days}日`}</span></div>
+      <div class="sub">${fmtDate(d.date)}・${esc(mname(d.p.insuredId))}</div></a></li>`).join("")}</ul>`
+    : `<div class="empty"><p>満期や更新の日を登録すると、ここに近い順で並びます。</p></div>`}
+  ${!S.members.length ? `<h2>はじめに</h2><div class="empty"><p>まず家族を登録してから、保険を登録します。</p><a class="btn" href="#settings">家族を登録する</a></div>`
+    : !S.policies.length ? `<h2>はじめに</h2><div class="empty"><p>手元の保険証券を1枚用意して、最初の保険を登録しましょう。</p><button class="btn" id="addFirst">保険を登録する</button></div>` : ""}
+  `;
+  document.getElementById("addFirst")?.addEventListener("click", addPolicy);
+}
+
+let listFilter = "all";
+function viewList(){
+  setTab("list");
+  const pols = S.policies.filter(p=> listFilter==="all" || p.insuredId===listFilter);
+  app.innerHTML = `
+  <h1>保険一覧</h1>
+  <div class="seg" role="group" aria-label="家族で絞り込む">
+    <button aria-pressed="${listFilter==="all"}" data-f="all">全員</button>
+    ${S.members.map(m=>`<button aria-pressed="${listFilter===m.id}" data-f="${m.id}">${esc(m.name)}</button>`).join("")}
+  </div>
+  ${pols.length ? `<ul class="list">${pols.map(p=>`<li><a href="#policy/${p.id}">
+    <div class="pol-top"><span class="pol-name">${esc(p.name||"名称未設定")}</span><span class="num">${yen(annual(p))}<span class="sub">/年</span></span></div>
+    <div class="pol-grid">
+      <span>保険会社</span><span>${esc(p.company)||"—"}</span>
+      <span>証券番号</span><span class="num">${esc(p.number)||"—"}</span>
+      <span>被保険者</span><span>${esc(mname(p.insuredId))}</span>
+      <span>保障</span><span>${(p.covers||[]).filter(c=>c.kind).map(c=>esc(c.kind)+(c.amount?" "+esc(c.amount):"")).join("、")||"—"}</span>
+    </div></a></li>`).join("")}</ul>`
+  : `<div class="empty"><p>まだ保険がありません。</p></div>`}
+  <div class="actions"><button class="btn block" id="add">保険を登録する</button></div>`;
+  app.querySelectorAll(".seg button").forEach(b=> b.onclick = ()=>{ listFilter=b.dataset.f; viewList(); });
+  document.getElementById("add").onclick = addPolicy;
+}
+
+function addPolicy(){
+  const p = { id:uid(), company:"", name:"", type:"", number:"", contractor:"", payerId:S.settings.taxpayerId||"", insuredId:S.members[0]?.id||"", beneficiary:"",
+    premium:"", freq:"month", annualOverride:"", covers:[{kind:"",amount:""}], start:"", maturity:"", renewal:"", payEnd:"",
+    deduct:"none", regime:"new", certAmount:"", memo:"", photos:[] };
+  S.policies.push(p); save(); location.hash = "#policy/"+p.id;
+}
+
+function sel(name, val, opts, blank){ return `<select name="${name}">${blank?`<option value="">${blank}</option>`:""}${opts.map(([v,l])=>`<option value="${esc(v)}" ${String(v)===String(val)?"selected":""}>${esc(l)}</option>`).join("")}</select>`; }
+const memberOpts = ()=> S.members.map(m=>[m.id,m.name]);
+
+function viewPolicy(id){
+  setTab("list");
+  const p = S.policies.find(x=>x.id===id);
+  if(!p){ app.innerHTML = `<div class="empty"><p>この保険は見つかりません。削除された可能性があります。</p><a class="btn" href="#list">保険一覧に戻る</a></div>`; return; }
+  app.innerHTML = `
+  <p><a href="#list" class="sub">‹ 保険一覧</a></p>
+  <h1>${esc(p.name||"保険の登録")}</h1>
+  <p class="hint">iPhoneでは、入力欄をタップして表示されるメニューの「テキストをスキャン」で、証券の文字をカメラから取り込めます。入力はその場で自動保存されます。</p>
+  <form id="pf" autocomplete="off">
+    <fieldset><legend>証券の写真</legend>
+      <div class="photos" id="photos"></div>
+      <label class="btn ghost">写真を追加する<input type="file" accept="image/*" capture="environment" id="ph" hidden></label>
+    </fieldset>
+    <fieldset><legend>基本</legend>
+      <label class="f"><span>保険会社</span><input name="company" value="${esc(p.company)}"></label>
+      <label class="f"><span>保険名</span><input name="name" value="${esc(p.name)}"></label>
+      <div class="two">
+        <label class="f"><span>種類</span>${sel("type",p.type,TYPES.map(t=>[t,t]),"選択")}</label>
+        <label class="f"><span>証券番号</span><input name="number" value="${esc(p.number)}" inputmode="text"></label>
+      </div>
+      <div class="two">
+        <label class="f"><span>被保険者</span>${sel("insuredId",p.insuredId,memberOpts(),"選択")}</label>
+        <label class="f"><span>保険料を払う人</span>${sel("payerId",p.payerId,memberOpts(),"選択")}</label>
+      </div>
+      <div class="two">
+        <label class="f"><span>契約者</span><input name="contractor" value="${esc(p.contractor)}"></label>
+        <label class="f"><span>受取人</span><input name="beneficiary" value="${esc(p.beneficiary)}"></label>
+      </div>
+    </fieldset>
+    <fieldset><legend>保険料</legend>
+      <div class="two">
+        <label class="f"><span>保険料（円）</span><input name="premium" value="${esc(p.premium)}" inputmode="numeric"></label>
+        <label class="f"><span>払い方</span>${sel("freq",p.freq,Object.entries(FREQ))}</label>
+      </div>
+      <label class="f"><span>年間保険料（自動計算 <b class="num" id="autoAnnual">${yen(annual({...p,annualOverride:""}))}</b>。違う場合だけ入力）</span><input name="annualOverride" value="${esc(p.annualOverride)}" inputmode="numeric"></label>
+    </fieldset>
+    <fieldset><legend>保障内容</legend>
+      <div id="covs"></div>
+      <button type="button" class="btn ghost" id="addCov">保障を追加する</button>
+    </fieldset>
+    <fieldset><legend>期限</legend>
+      <div class="two">
+        <label class="f"><span>契約日</span><input type="date" name="start" value="${esc(p.start)}"></label>
+        <label class="f"><span>満期日</span><input type="date" name="maturity" value="${esc(p.maturity)}"></label>
+        <label class="f"><span>更新日</span><input type="date" name="renewal" value="${esc(p.renewal)}"></label>
+        <label class="f"><span>払込終了日</span><input type="date" name="payEnd" value="${esc(p.payEnd)}"></label>
+      </div>
+    </fieldset>
+    <fieldset><legend>年末調整</legend>
+      <div class="two">
+        <label class="f"><span>控除の区分</span>${sel("deduct",p.deduct,Object.entries(DEDUCT))}</label>
+        <label class="f"><span>制度</span>${sel("regime",p.regime,[["new","新制度（2012年以降の契約）"],["old","旧制度（2011年以前の契約）"]])}</label>
+      </div>
+      <label class="f"><span>今年の控除証明書の申告額（届いたら入力）</span><input name="certAmount" value="${esc(p.certAmount)}" inputmode="numeric"></label>
+    </fieldset>
+    <fieldset><legend>メモ</legend>
+      <label class="f"><span>担当者の連絡先など</span><textarea name="memo">${esc(p.memo)}</textarea></label>
+    </fieldset>
+  </form>
+  <div class="actions"><button class="btn danger" id="del">この保険を削除する</button></div>`;
+
+  const form = document.getElementById("pf");
+  form.addEventListener("input", e=>{
+    const t = e.target; if(!t.name || t.name.startsWith("cov")) return;
+    p[t.name] = ["premium","annualOverride","certAmount"].includes(t.name) ? t.value.replace(/[^\d]/g,"") : t.value;
+    if (t.name==="name") app.querySelector("h1").textContent = p.name || "保険の登録";
+    if (["premium","freq"].includes(t.name)) document.getElementById("autoAnnual").textContent = yen(annual({...p,annualOverride:""}));
+    save();
+  });
+  form.addEventListener("change", e=>{ if(e.target.tagName==="SELECT" && !e.target.name.startsWith("cov")){ p[e.target.name]=e.target.value; save(); } });
+
+  const covs = document.getElementById("covs");
+  function drawCovs(){
+    covs.innerHTML = p.covers.map((c,i)=>`<div class="cov-row">
+      <select name="covKind" data-i="${i}" aria-label="保障の種類"><option value="">種類</option>${COVERS.map(k=>`<option ${k===c.kind?"selected":""}>${k}</option>`).join("")}</select>
+      <input name="covAmount" data-i="${i}" value="${esc(c.amount)}" placeholder="例：日額5,000円" aria-label="保障の金額">
+      <button type="button" data-rm="${i}" aria-label="この保障を削除">×</button></div>`).join("");
+  }
+  drawCovs();
+  covs.addEventListener("input", e=>{ const i=e.target.dataset.i; if(i==null) return; if(e.target.name==="covKind") p.covers[i].kind=e.target.value; else p.covers[i].amount=e.target.value; save(); });
+  covs.addEventListener("change", e=>{ const i=e.target.dataset.i; if(i!=null && e.target.name==="covKind"){ p.covers[i].kind=e.target.value; save(); } });
+  covs.addEventListener("click", e=>{ const i=e.target.dataset.rm; if(i==null) return; p.covers.splice(i,1); if(!p.covers.length) p.covers.push({kind:"",amount:""}); drawCovs(); save(); });
+  document.getElementById("addCov").onclick = ()=>{ p.covers.push({kind:"",amount:""}); drawCovs(); save(); };
+
+  const photos = document.getElementById("photos");
+  function drawPhotos(){
+    photos.innerHTML = (p.photos||[]).map(pid=> S.photos[pid] ? `<figure><img src="${S.photos[pid]}" alt="証券の写真"><button type="button" data-pid="${pid}" aria-label="写真を削除">×</button></figure>` : "").join("");
+  }
+  drawPhotos();
+  photos.addEventListener("click", e=>{
+    const pid = e.target.dataset.pid;
+    if (pid){ if(!confirm("この写真を削除しますか？")) return; p.photos = p.photos.filter(x=>x!==pid); delete S.photos[pid]; drawPhotos(); save(); return; }
+    if (e.target.tagName==="IMG"){ const w = window.open(); if(w) w.document.write(`<img src="${e.target.src}" style="width:100%">`); }
+  });
+  document.getElementById("ph").addEventListener("change", async e=>{
+    const f = e.target.files[0]; if(!f) return;
+    try{ const data = await shrink(f, 1600, 0.75); const pid = uid(); S.photos[pid]=data; p.photos=[...(p.photos||[]),pid]; drawPhotos(); save(); }
+    catch(err){ flash("写真を読み込めませんでした"); }
+    e.target.value="";
+  });
+  document.getElementById("del").onclick = ()=>{
+    if(!confirm(`「${p.name||"この保険"}」を削除しますか？元に戻せません。`)) return;
+    (p.photos||[]).forEach(pid=> delete S.photos[pid]);
+    S.policies = S.policies.filter(x=>x.id!==p.id); save(); location.hash="#list";
+  };
+}
+
+function shrink(file, max, q){
+  return new Promise((res,rej)=>{
+    const img = new Image(); const url = URL.createObjectURL(file);
+    img.onload = ()=>{ const s = Math.min(1, max/Math.max(img.width,img.height)); const c = document.createElement("canvas");
+      c.width = Math.round(img.width*s); c.height = Math.round(img.height*s); c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url); res(c.toDataURL("image/jpeg",q)); };
+    img.onerror = rej; img.src = url;
+  });
+}
+
+function viewMap(){
+  setTab("map");
+  if(!S.members.length){ app.innerHTML = `<h1>保障マップ</h1><div class="empty"><p>家族を登録すると、誰にどの保障があるかを一覧で見られます。</p><a class="btn" href="#settings">家族を登録する</a></div>`; return; }
+  const used = COVERS.filter(k=> S.policies.some(p=>(p.covers||[]).some(c=>c.kind===k)));
+  const cols = used.length ? used : COVERS.slice(0,6);
+  const cell = (mid,k)=>{ const ps = S.policies.filter(p=>p.insuredId===mid && (p.covers||[]).some(c=>c.kind===k)); return ps; };
+  app.innerHTML = `
+  <h1>保障マップ</h1>
+  <p class="sub">丸印は保障あり、数字はその保障を持つ保険の件数です。2件以上は重なっている可能性があります。</p>
+  <div class="map-wrap"><table class="map">
+    <thead><tr><th scope="col">家族</th>${cols.map(k=>`<th scope="col">${k}</th>`).join("")}</tr></thead>
+    <tbody>${S.members.map(m=>`<tr><th scope="row">${esc(m.name)}</th>${cols.map(k=>{ const ps=cell(m.id,k);
+      return `<td>${ps.length ? `<button class="hanko ${ps.length>1?"multi":""}" style="background:none" data-m="${m.id}" data-k="${k}" aria-label="${esc(m.name)}の${k}：${ps.length}件">${ps.length}</button>` : `<span class="none" aria-label="なし">—</span>`}</td>`; }).join("")}</tr>`).join("")}</tbody>
+  </table></div>
+  <div id="mapDetail"></div>`;
+  app.querySelectorAll(".hanko").forEach(b=> b.onclick = ()=>{
+    const ps = cell(b.dataset.m, b.dataset.k);
+    document.getElementById("mapDetail").innerHTML = `<h2>${esc(mname(b.dataset.m))}の${b.dataset.k}</h2><ul class="list">${ps.map(p=>{
+      const c = p.covers.filter(c=>c.kind===b.dataset.k).map(c=>c.amount).filter(Boolean).join("、");
+      return `<li><a href="#policy/${p.id}"><div class="pol-name">${esc(p.name||"名称未設定")}</div><div class="sub">${esc(p.company)}${c?"・"+esc(c):""}</div></a></li>`; }).join("")}</ul>`;
+  });
+}
+
+function viewTax(){
+  setTab("tax");
+  const t = taxSummary();
+  const payer = S.settings.taxpayerId;
+  const lines = (key,label)=>{ const rs = t.rows.filter(r=>r.p.deduct===key); if(!rs.length) return "";
+    return rs.map(r=>`<div class="tax-line"><span><a href="#policy/${r.p.id}">${esc(r.p.name||r.p.company||"名称未設定")}</a><br><span class="sub">${r.p.regime==="old"?"旧制度":"新制度"}・${r.cert!=null?"証明書の額":"登録からの見込み"}</span></span>
+      <span class="num">${yen(r.amt)}${r.cert!=null && r.cert!==r.est ? `<br><span class="chip due">見込みと${yen(Math.abs(r.cert-r.est))}差</span>` : r.cert!=null ? `<br><span class="chip take">一致</span>`:""}</span></div>`).join(""); };
+  app.innerHTML = `
+  <h1>年末調整</h1>
+  <div class="seg" role="group" aria-label="申告する人">
+    ${S.members.map(m=>`<button aria-pressed="${payer===m.id}" data-p="${m.id}">${esc(m.name)}</button>`).join("") || `<span class="sub">設定で家族を登録してください</span>`}
+  </div>
+  ${!payer ? `<p class="warn">申告する人を選ぶと、その人が保険料を払っている保険だけを集計します。</p>` : ""}
+  ${t.special ? `<p class="warn">23歳未満の扶養親族がいるため、令和8年以降の特例で一般生命保険料控除の上限が6万円になる可能性があります。この画面は通常の上限（4万円）で計算しています。控除証明書と国税庁の案内で確認してください。</p>` : ""}
+  <div class="tax-card"><h3>一般生命保険料</h3>${lines("general") || `<p class="sub">対象の保険はありません</p>`}
+    <div class="tax-total"><span>控除額の目安</span><span class="v num">${yen(t.g)}</span></div></div>
+  <div class="tax-card"><h3>介護医療保険料</h3>${lines("medical") || `<p class="sub">対象の保険はありません</p>`}
+    <div class="tax-total"><span>控除額の目安</span><span class="v num">${yen(t.m)}</span></div></div>
+  <div class="tax-card"><h3>個人年金保険料</h3>${lines("pension") || `<p class="sub">対象の保険はありません</p>`}
+    <div class="tax-total"><span>控除額の目安</span><span class="v num">${yen(t.y)}</span></div></div>
+  <div class="tax-card" style="border-color:var(--ai)"><h3>生命保険料控除の合計（上限12万円）</h3>
+    <div class="tax-total"><span>申告書に書く合計の目安</span><span class="v num">${yen(t.life)}</span></div></div>
+  <div class="tax-card"><h3>地震保険料控除</h3>${lines("quake")}${lines("oldLong") || (lines("quake")?"":`<p class="sub">対象の保険はありません</p>`)}
+    <div class="tax-total"><span>控除額の目安（上限5万円）</span><span class="v num">${yen(t.quake)}</span></div></div>
+  <p class="note">所得税の控除額の目安です（国税庁 No.1140・No.1145の計算式）。控除証明書の申告額を各保険に入力すると、その金額で計算し、登録からの見込みとの差を表示します。最終的な金額は必ず控除証明書で確認してください。</p>`;
+  app.querySelectorAll(".seg button").forEach(b=> b.onclick = ()=>{ S.settings.taxpayerId=b.dataset.p; save(); viewTax(); });
+}
+
+function viewSettings(){
+  setTab("settings");
+  app.innerHTML = `
+  <h1>設定</h1>
+  <h2>家族</h2>
+  <ul class="list" id="mlist">${S.members.map(m=>`<li class="item">
+    <div class="two">
+      <label class="f"><span>名前</span><input data-id="${m.id}" data-k="name" value="${esc(m.name)}"></label>
+      <label class="f"><span>続柄</span><select data-id="${m.id}" data-k="rel">${RELS.map(r=>`<option ${r===m.rel?"selected":""}>${r}</option>`).join("")}</select></label>
+      <label class="f"><span>生年月日</span><input type="date" data-id="${m.id}" data-k="birth" value="${esc(m.birth)}"></label>
+      <label class="f"><span>扶養</span><select data-id="${m.id}" data-k="dependent"><option value="">扶養ではない</option><option value="1" ${m.dependent?"selected":""}>扶養している</option></select></label>
+    </div>
+    <button class="btn danger" data-del="${m.id}">${esc(m.name||"この人")}を削除する</button></li>`).join("")}</ul>
+  <div class="actions"><button class="btn" id="addM">家族を追加する</button></div>
+  <p class="sub">生年月日と扶養は、年末調整の特例（23歳未満の扶養親族）の判定に使います。</p>
+
+  <h2>データの保存と移行</h2>
+  <p class="sub">データはこの端末の中だけに保存され、外部には送信されません。機種変更や万一に備えて、ときどき書き出してください。</p>
+  <div class="actions">
+    <button class="btn ghost" id="exp">データを書き出す</button>
+    <label class="btn ghost">データを読み込む<input type="file" accept="application/json,.json" id="imp" hidden></label>
+  </div>`;
+  const ml = document.getElementById("mlist");
+  const upd = e=>{ const {id,k}=e.target.dataset; if(!id) return; const m=member(id); m[k] = k==="dependent" ? e.target.value==="1" : e.target.value; save(); };
+  ml.addEventListener("input", upd); ml.addEventListener("change", upd);
+  ml.addEventListener("click", e=>{ const id=e.target.dataset.del; if(!id) return;
+    const used = S.policies.some(p=>p.insuredId===id||p.payerId===id);
+    if(!confirm(used?"この人に関係する保険があります。家族から削除しても保険は残ります。削除しますか？":"削除しますか？")) return;
+    S.members = S.members.filter(m=>m.id!==id); if(S.settings.taxpayerId===id) S.settings.taxpayerId=""; save(); viewSettings(); });
+  document.getElementById("addM").onclick = ()=>{ const first=!S.members.length; const m={id:uid(),name:"",rel:first?"本人":"配偶者",birth:"",dependent:false};
+    S.members.push(m); if(first) S.settings.taxpayerId=m.id; save(); viewSettings(); ml.querySelector(`input[data-id="${m.id}"]`)?.focus(); };
+  document.getElementById("exp").onclick = ()=>{
+    const blob = new Blob([JSON.stringify({app:"hoken-note",version:1,exportedAt:new Date().toISOString(),data:S})],{type:"application/json"});
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `hoken-note-${new Date().toISOString().slice(0,10)}.json`; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  };
+  document.getElementById("imp").addEventListener("change", async e=>{
+    const f=e.target.files[0]; if(!f) return;
+    try{ const j = JSON.parse(await f.text()); if(j.app!=="hoken-note"||!j.data) throw 0;
+      if(!confirm("今のデータを、読み込んだデータで置き換えます。よろしいですか？")) return;
+      S = j.data; await dbSet("state",S); flash("読み込みました"); viewSettings();
+    }catch(err){ flash("このファイルは読み込めません"); }
+    e.target.value="";
+  });
+}
+
+/* ========== ルーティング ========== */
+function route(){
+  const h = location.hash.slice(1) || "home";
+  const [name,arg] = h.split("/");
+  window.scrollTo(0,0);
+  ({home:viewHome, list:viewList, map:viewMap, tax:viewTax, settings:viewSettings, policy:()=>viewPolicy(arg)}[name] || viewHome)();
+}
+window.addEventListener("hashchange", route);
+
+(async ()=>{
+  try{ const saved = await dbGet("state"); if(saved) S = {...S, ...saved, settings:{...S.settings, ...(saved.settings||{})}}; }
+  catch(e){ app.innerHTML = `<div class="warn">データを読み込めませんでした。プライベートブラウズでは保存できないため、通常モードで開いてください。</div>`; }
+  route();
+})();
+</script>
+</body>
+</html>
