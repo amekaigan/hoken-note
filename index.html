@@ -140,13 +140,42 @@ function idb(){ return new Promise((res,rej)=>{ const r = indexedDB.open(DB_NAME
   r.onsuccess = ()=> res(r.result); r.onerror = ()=> rej(r.error); }); }
 async function dbGet(key){ const db = await idb(); return new Promise((res,rej)=>{ const t = db.transaction(STORE).objectStore(STORE).get(key); t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error); }); }
 async function dbSet(key,val){ const db = await idb(); return new Promise((res,rej)=>{ const t = db.transaction(STORE,"readwrite"); t.objectStore(STORE).put(val,key); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+async function dbDel(key){ const db = await idb(); return new Promise((res,rej)=>{ const t = db.transaction(STORE,"readwrite"); t.objectStore(STORE).delete(key); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+async function dbKeys(){ const db = await idb(); return new Promise((res,rej)=>{ const t = db.transaction(STORE).objectStore(STORE).getAllKeys(); t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error); }); }
 
-let S = { members:[], policies:[], photos:{}, settings:{ taxpayerId:"", taxYear:new Date().getFullYear() } };
+/* 保存の形（2026年10月）：写真は1枚ずつ "photo:<id>" に分けて保存し、"state" には写真を含めない。
+   入力のたびに写真まで保存し直すと重くなるため。書き出すファイルの形は変えていない（写真も含む）。 */
+const SCHEMA = 2, PHOTO_KEY = id => "photo:"+id;
+const blank = ()=> ({ members:[], policies:[], photos:{}, settings:{ taxpayerId:"", taxYear:new Date().getFullYear() } });
+function normalize(d){ const b = blank(); d = d || {};
+  return {...b, ...d, members:d.members||[], policies:d.policies||[], photos:d.photos||{}, settings:{...b.settings, ...(d.settings||{})}}; }
+let S = blank();
+const stateOnly = ()=> { const {photos, ...rest} = S; return {...rest, schema:SCHEMA}; };
+/* 写真を別に保存してから、写真を含まない state を書く（途中で止まっても古い state は残る） */
+async function writeAll(){
+  for (const [pid,data] of Object.entries(S.photos)) await dbSet(PHOTO_KEY(pid), data);
+  await dbSet("state", stateOnly());
+  const keep = new Set(Object.keys(S.photos).map(PHOTO_KEY));
+  for (const k of await dbKeys()) if (String(k).startsWith("photo:") && !keep.has(k)) await dbDel(k);
+}
+async function loadAll(){
+  const saved = await dbGet("state");
+  if (!saved) return;
+  if (saved.schema >= SCHEMA){
+    S = normalize(saved); delete S.schema; S.photos = {};
+    for (const p of S.policies) for (const pid of (p.photos||[])){
+      try{ const d = await dbGet(PHOTO_KEY(pid)); if (d) S.photos[pid] = d; }catch(e){}
+    }
+  } else {
+    S = normalize(saved);
+    try{ await writeAll(); }catch(e){ /* 移せなくても古い形のまま使える */ }
+  }
+}
 let saveTimer = null;
 function save(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async ()=>{
-    try{ await dbSet("state", S); flash("保存しました"); }
+    try{ await dbSet("state", stateOnly()); flash("保存しました"); }
     catch(e){ flash("保存できませんでした。容量を確認してください"); }
   }, 300);
 }
@@ -290,7 +319,10 @@ function viewPolicy(id){
   <form id="pf" autocomplete="off">
     <fieldset><legend>証券の写真</legend>
       <div class="photos" id="photos"></div>
-      <label class="btn ghost">写真を追加する<input type="file" accept="image/*" capture="environment" id="ph" hidden></label>
+      <div class="actions">
+        <label class="btn ghost">写真を撮る<input type="file" accept="image/*" capture="environment" id="ph" hidden></label>
+        <label class="btn ghost">写真から選ぶ<input type="file" accept="image/*" multiple id="ph2" hidden></label>
+      </div>
     </fieldset>
     <fieldset><legend>基本</legend>
       <label class="f"><span>保険会社</span><input name="company" value="${esc(p.company)}"></label>
@@ -370,18 +402,24 @@ function viewPolicy(id){
   drawPhotos();
   photos.addEventListener("click", e=>{
     const pid = e.target.dataset.pid;
-    if (pid){ if(!confirm("この写真を削除しますか？")) return; p.photos = p.photos.filter(x=>x!==pid); delete S.photos[pid]; drawPhotos(); save(); return; }
+    if (pid){ if(!confirm("この写真を削除しますか？")) return; p.photos = p.photos.filter(x=>x!==pid); delete S.photos[pid]; drawPhotos(); save(); dbDel(PHOTO_KEY(pid)).catch(()=>{}); return; }
     if (e.target.tagName==="IMG"){ const w = window.open(); if(w) w.document.write(`<img src="${e.target.src}" style="width:100%">`); }
   });
-  document.getElementById("ph").addEventListener("change", async e=>{
-    const f = e.target.files[0]; if(!f) return;
-    try{ const data = await shrink(f, 1600, 0.75); const pid = uid(); S.photos[pid]=data; p.photos=[...(p.photos||[]),pid]; drawPhotos(); save(); }
-    catch(err){ flash("写真を読み込めませんでした"); }
+  async function addPhotos(e){
+    const files = [...(e.target.files||[])]; if(!files.length) return;
+    for (const f of files){
+      try{ const data = await shrink(f, 1600, 0.75); const pid = uid();
+        await dbSet(PHOTO_KEY(pid), data);
+        S.photos[pid]=data; p.photos=[...(p.photos||[]),pid]; drawPhotos(); save(); }
+      catch(err){ flash("写真を読み込めませんでした"); }
+    }
     e.target.value="";
-  });
+  }
+  document.getElementById("ph").addEventListener("change", addPhotos);
+  document.getElementById("ph2").addEventListener("change", addPhotos);
   document.getElementById("del").onclick = ()=>{
     if(!confirm(`「${p.name||"この保険"}」を削除しますか？元に戻せません。`)) return;
-    (p.photos||[]).forEach(pid=> delete S.photos[pid]);
+    (p.photos||[]).forEach(pid=>{ delete S.photos[pid]; dbDel(PHOTO_KEY(pid)).catch(()=>{}); });
     S.policies = S.policies.filter(x=>x.id!==p.id); save(); location.hash="#list";
   };
 }
@@ -487,7 +525,7 @@ function viewSettings(){
     const f=e.target.files[0]; if(!f) return;
     try{ const j = JSON.parse(await f.text()); if(j.app!=="hoken-note"||!j.data) throw 0;
       if(!confirm("今のデータを、読み込んだデータで置き換えます。よろしいですか？")) return;
-      S = j.data; await dbSet("state",S); flash("読み込みました"); viewSettings();
+      S = normalize(j.data); delete S.schema; await writeAll(); flash("読み込みました"); viewSettings();
     }catch(err){ flash("このファイルは読み込めません"); }
     e.target.value="";
   });
@@ -503,7 +541,7 @@ function route(){
 window.addEventListener("hashchange", route);
 
 (async ()=>{
-  try{ const saved = await dbGet("state"); if(saved) S = {...S, ...saved, settings:{...S.settings, ...(saved.settings||{})}}; }
+  try{ await loadAll(); }
   catch(e){ app.innerHTML = `<div class="warn">データを読み込めませんでした。プライベートブラウズでは保存できないため、通常モードで開いてください。</div>`; }
   route();
 })();
