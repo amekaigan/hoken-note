@@ -212,10 +212,14 @@ function deadlines(){
 const ceil = Math.ceil;
 function calcNew(p){ if(p<=0) return 0; if(p<=20000) return p; if(p<=40000) return ceil(p/2+10000); if(p<=80000) return ceil(p/4+20000); return 40000; }
 function calcOld(p){ if(p<=0) return 0; if(p<=25000) return p; if(p<=50000) return ceil(p/2+12500); if(p<=100000) return ceil(p/4+25000); return 50000; }
-function calcCategory(newSum, oldSum){
-  if (oldSum<=0) return calcNew(newSum);
+// 令和8年分以降、23歳未満の扶養親族を有する場合の新生命保険料（国税庁 No.1140）
+function calcNewYoung(p){ if(p<=0) return 0; if(p<=30000) return p; if(p<=60000) return ceil(p/2+15000); if(p<=120000) return ceil(p/4+30000); return 60000; }
+function calcCategory(newSum, oldSum, young){
+  const nf = young ? calcNewYoung : calcNew;
+  const cap = young ? 60000 : 40000;
+  if (oldSum<=0) return nf(newSum);
   if (newSum<=0) return calcOld(oldSum);
-  return Math.max(calcOld(oldSum), Math.min(40000, calcNew(newSum)+calcOld(oldSum)));
+  return Math.max(calcOld(oldSum), Math.min(cap, nf(newSum)+calcOld(oldSum)));
 }
 function calcOldLong(p){ if(p<=0) return 0; if(p<=10000) return p; if(p<=20000) return ceil(p/2+5000); return 15000; }
 function taxSummary(){
@@ -231,16 +235,16 @@ function taxSummary(){
     else if (p.deduct==="oldLong") sum.oldLong += amt;
     else if (sum[p.deduct]) sum[p.deduct][p.regime==="old"?"o":"n"] += amt;
   }
-  const g = calcCategory(sum.general.n, sum.general.o);
-  const m = calcNew(sum.medical.n + sum.medical.o);
-  const y = calcCategory(sum.pension.n, sum.pension.o);
-  const life = Math.min(120000, g+m+y);
-  const quake = Math.min(50000, Math.min(50000, sum.quake) + calcOldLong(sum.oldLong));
-  // 令和8年以降の扶養特例（23歳未満の扶養親族）の対象になりうるか
+  // 令和8年分以降の特例（23歳未満の扶養親族を有し、新生命保険料を支払った場合）
   const year = Number(S.settings.taxYear)||new Date().getFullYear();
   const end = new Date(year,11,31);
   const hasYoung = S.members.some(mb => mb.id!==payer && mb.dependent && ageAt(mb.birth,end)!==null && ageAt(mb.birth,end)<23);
   const special = year>=2026 && hasYoung && sum.general.n>0;
+  const g = calcCategory(sum.general.n, sum.general.o, special);
+  const m = calcNew(sum.medical.n + sum.medical.o);
+  const y = calcCategory(sum.pension.n, sum.pension.o);
+  const life = Math.min(120000, g+m+y);
+  const quake = Math.min(50000, Math.min(50000, sum.quake) + calcOldLong(sum.oldLong));
   return {rows, sum, g, m, y, life, quake, special};
 }
 
@@ -470,7 +474,7 @@ function viewTax(){
     ${S.members.map(m=>`<button aria-pressed="${payer===m.id}" data-p="${m.id}">${esc(m.name)}</button>`).join("") || `<span class="sub">設定で家族を登録してください</span>`}
   </div>
   ${!payer ? `<p class="warn">申告する人を選ぶと、その人が保険料を払っている保険だけを集計します。</p>` : ""}
-  ${t.special ? `<p class="warn">23歳未満の扶養親族がいるため、令和8年以降の特例で一般生命保険料控除の上限が6万円になる可能性があります。この画面は通常の上限（4万円）で計算しています。控除証明書と国税庁の案内で確認してください。</p>` : ""}
+  ${t.special ? `<p class="warn">23歳未満の扶養親族がいるため、令和8年分からの特例（一般生命保険料控除の上限6万円）で計算しています。扶養と生年月日の登録が正しいか、控除証明書と国税庁の案内（タックスアンサーNo.1140）で確認してください。</p>` : ""}
   <div class="tax-card"><h3>一般生命保険料</h3>${lines("general") || `<p class="sub">対象の保険はありません</p>`}
     <div class="tax-total"><span>控除額の目安</span><span class="v num">${yen(t.g)}</span></div></div>
   <div class="tax-card"><h3>介護医療保険料</h3>${lines("medical") || `<p class="sub">対象の保険はありません</p>`}
