@@ -110,6 +110,7 @@ table.map{border-collapse:collapse;min-width:100%}
 .tax-total .v{font-size:1.4rem}
 .warn{background:var(--due-soft);color:var(--due);border-radius:var(--r-sm);padding:10px 12px;font-size:.85rem;margin:0 0 12px}
 .note{font-size:.8rem;color:var(--sub)}
+.cands{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}
 </style>
 </head>
@@ -369,6 +370,12 @@ function viewPolicy(id){
         <label class="f"><span>制度</span>${sel("regime",p.regime,[["new","新制度（2012年以降の契約）"],["old","旧制度（2011年以前の契約）"]])}</label>
       </div>
       <label class="f"><span>今年の控除証明書の申告額（届いたら入力）</span><input name="certAmount" value="${esc(p.certAmount)}" inputmode="numeric"></label>
+      <div class="actions">
+        <label class="btn ghost">控除証明書の写真から読み取る<input type="file" accept="image/*" id="ocr" hidden></label>
+      </div>
+      <p class="sub" id="ocrMsg">写真の文字を端末の中で読み取り、制度・区分・申告額の候補を入れます。写真は外に送りません。読み取りは間違えることがあるので、証明書と見比べてください。</p>
+      <div class="cands" id="ocrCands"></div>
+      <details id="ocrRaw" hidden><summary class="sub">読み取った文字を見る</summary><pre class="note" id="ocrText" style="white-space:pre-wrap"></pre></details>
     </fieldset>
     <fieldset><legend>メモ</legend>
       <label class="f"><span>担当者の連絡先など</span><textarea name="memo">${esc(p.memo)}</textarea></label>
@@ -421,6 +428,40 @@ function viewPolicy(id){
   }
   document.getElementById("ph").addEventListener("change", addPhotos);
   document.getElementById("ph2").addEventListener("change", addPhotos);
+
+  // 控除証明書の写真から、制度・区分・申告額を読み取る
+  const ocrMsg = document.getElementById("ocrMsg"), ocrCands = document.getElementById("ocrCands");
+  const setField = (name,val)=>{ const el = form.elements[name]; if(!el) return; el.value = val; p[name] = name==="certAmount" ? String(val).replace(/[^\d]/g,"") : el.value; };
+  document.getElementById("ocr").addEventListener("change", async e=>{
+    const f = (e.target.files||[])[0]; e.target.value=""; if(!f) return;
+    ocrCands.innerHTML = ""; document.getElementById("ocrRaw").hidden = true;
+    ocrMsg.textContent = "読み取り中です。初回は読み取り用のデータ（約10MB）を読み込むため、1分ほどかかることがあります。";
+    try{
+      const img = await shrink(f, 2000, 0.9);
+      const T = await loadOcr();
+      const worker = await T.createWorker("jpn", 1, { langPath:"https://tessdata.projectnaptha.com/4.0.0_fast",
+        logger: m=>{ if(m.status==="recognizing text") ocrMsg.textContent = "読み取り中… "+Math.round((m.progress||0)*100)+"%"; } });
+      const { data } = await worker.recognize(img);
+      await worker.terminate();
+      document.getElementById("ocrText").textContent = data.text; document.getElementById("ocrRaw").hidden = false;
+      const r = parseCert(data.text);
+      const said = [];
+      if (r.regime){ setField("regime", r.regime); said.push("制度＝"+(r.regime==="old"?"旧制度":"新制度")); }
+      if (r.deduct){ setField("deduct", r.deduct); said.push("区分＝"+DEDUCT[r.deduct]); }
+      if (r.amount!=null){
+        if (!p.certAmount || Number(p.certAmount)===r.amount){ setField("certAmount", r.amount); said.push("申告額＝"+yen(r.amount)+(r.basis==="申告額"?"（12月まで払った場合の年間額）":"（証明額）")); }
+        else said.push("申告額の候補＝"+yen(r.amount)+"（入力ずみの額は変えていません）");
+      }
+      save();
+      ocrMsg.textContent = said.length
+        ? "読み取り結果：" + said.join("、") + "。証明書と見比べて、違っていれば直してください。"
+        : "読み取れる項目が見つかりませんでした。写真を明るい場所で、証明書いっぱいに撮り直すか、手で入力してください。";
+      ocrCands.innerHTML = r.cands.length ? `<span class="sub">読み取れた金額（タップで申告額に入れる）：</span>` + r.cands.map(v=>`<button type="button" class="btn ghost" data-v="${v}">${yen(v)}</button>`).join("") : "";
+    }catch(err){
+      ocrMsg.textContent = "読み取れませんでした（通信できないか、読み取り用のデータを読み込めなかった可能性があります）。手で入力してください。";
+    }
+  });
+  ocrCands.addEventListener("click", e=>{ const v = e.target.dataset.v; if(!v) return; setField("certAmount", v); save(); ocrMsg.textContent = "申告額を "+yen(Number(v))+" にしました。"; });
   document.getElementById("del").onclick = ()=>{
     if(!confirm(`「${p.name||"この保険"}」を削除しますか？元に戻せません。`)) return;
     (p.photos||[]).forEach(pid=>{ delete S.photos[pid]; dbDel(PHOTO_KEY(pid)).catch(()=>{}); });
@@ -458,6 +499,42 @@ function viewMap(){
     document.getElementById("mapDetail").innerHTML = `<h2>${esc(mname(b.dataset.m))}の${b.dataset.k}</h2><ul class="list">${ps.map(p=>{
       const c = p.covers.filter(c=>c.kind===b.dataset.k).map(c=>c.amount).filter(Boolean).join("、");
       return `<li><a href="#policy/${p.id}"><div class="pol-name">${esc(p.name||"名称未設定")}</div><div class="sub">${esc(p.company)}${c?"・"+esc(c):""}</div></a></li>`; }).join("")}</ul>`;
+  });
+}
+
+/* ===== 控除証明書の写真の読み取り（端末の中だけで動かす。画像は外に送らない） ===== */
+// 読み取った文字から、制度・区分・申告額の候補を取り出す。文字認識は間違えることがあるので、結果は必ず人が確かめる
+function parseCert(raw){
+  const lines = String(raw||"").normalize("NFKC").split(/\n+/).map(s=>s.replace(/\s+/g,"")).filter(Boolean);
+  const all = lines.join("\n");
+  const D = "[-−–—ー‐‑]";
+  const yenOf = line => { const m=[...line.matchAll(/(\d{1,3}(?:,\d{3})+|\d+)円/g)]; return m.length ? Number(m[m.length-1][1].replace(/,/g,"")) : null; };
+  const find = re => { for (const l of lines){ if (re.test(l)){ const v = yenOf(l); if (v!=null) return v; } } return null; };
+  // 年間の見込み額（申告額）を先に、なければ今までの払込額（証明額）を見る
+  const rules = [
+    ["申告額","general", new RegExp("一般申告額|\\(a\\)"+D+"\\(b\\)")],
+    ["申告額","medical", new RegExp("介護医療申告額|\\(c\\)"+D+"\\(d\\)")],
+    ["申告額","pension", /個人年金申告額/],
+    ["証明額","general", new RegExp("一般証明額|\\(A\\)"+D+"\\(B\\)")],
+    ["証明額","medical", new RegExp("介護医療証明額|\\(C\\)"+D+"\\(D\\)")],
+    ["証明額","pension", /個人年金証明額|個人年金保険料控除証明額/],
+  ];
+  let pick = null;
+  for (const [basis,deduct,re] of rules){ const v = find(re); if (v>0){ pick = {basis,deduct,amount:v}; break; } }
+  const regime = /旧(?:個人年金)?(?:生命)?保険料控除制度|旧制度/.test(all) ? "old" : /新(?:個人年金)?(?:生命)?保険料控除制度|新制度/.test(all) ? "new" : null;
+  const quake = /地震保険料控除証明書/.test(all);
+  const cands = [];
+  for (const l of lines){ for (const m of l.matchAll(/(\d{1,3}(?:,\d{3})+|\d+)円/g)){ const v = Number(m[1].replace(/,/g,"")); if (v>0 && !cands.includes(v)) cands.push(v); } }
+  return { regime, deduct: quake ? "quake" : (pick ? pick.deduct : null), amount: pick ? pick.amount : null, basis: pick ? pick.basis : null, cands: cands.slice(0,8) };
+}
+function loadOcr(){
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  return new Promise((res,rej)=>{
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+    s.onload = ()=> window.Tesseract ? res(window.Tesseract) : rej(new Error("no tesseract"));
+    s.onerror = ()=> rej(new Error("load failed"));
+    document.head.appendChild(s);
   });
 }
 
