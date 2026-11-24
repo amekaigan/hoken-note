@@ -194,10 +194,14 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;"
 const yen = n => (Math.round(Number(n)||0)).toLocaleString("ja-JP")+"円";
 const member = id => S.members.find(m=>m.id===id);
 const mname = id => member(id)?.name || "未設定";
+/* 数字の入力欄に3桁ごとのカンマを付ける（保存する値はカンマなし） */
+const fmtDigits = v => String(v==null?"":v).replace(/[^\d]/g,"").replace(/\B(?=(\d{3})+(?!\d))/g,",");
+const fmtDec = v => { const [i,...r] = String(v==null?"":v).replace(/[^\d.]/g,"").split("."); return i.replace(/\B(?=(\d{3})+(?!\d))/g,",") + (r.length ? "."+r.join("") : ""); };
+const COMMA_FIELDS = { premium:fmtDigits, annualOverride:fmtDigits, certAmount:fmtDigits, premiumUsd:fmtDec };
 function annual(p){
   if (p.annualOverride !== "" && p.annualOverride != null) return Number(p.annualOverride)||0;
-  const v = Number(p.premium)||0;
-  return p.freq==="month" ? v*12 : p.freq==="year" ? v : 0;
+  const v = p.currency==="USD" ? (Number(p.premiumUsd)||0)*(Number(p.fxRate)||0) : (Number(p.premium)||0);
+  return Math.round(p.freq==="month" ? v*12 : p.freq==="year" ? v : 0);
 }
 function ageAt(birth, date){ if(!birth) return null; const b = new Date(birth); let a = date.getFullYear()-b.getFullYear();
   if (date.getMonth()<b.getMonth() || (date.getMonth()===b.getMonth() && date.getDate()<b.getDate())) a--; return a; }
@@ -270,6 +274,7 @@ function viewHome(){
   <div class="ledger">
     <div class="sub" style="color:inherit;opacity:.85">家族の保険 ${S.policies.length}件の年間保険料</div>
     <div class="big num">${yen(total)}</div>
+    ${S.policies.some(p=>p.currency==="USD") ? `<div class="sub" style="color:inherit;opacity:.85">ドル建は、入力したレートで円に直した概算を含みます。</div>` : ""}
     <div class="row"><span>家族 ${S.members.length}人</span><span>期限が近いもの ${deadlines().filter(d=>d.days<=90&&d.days>=0).length}件</span></div>
   </div>
   ${taxSeason ? `<h2>年末調整の時期です</h2><p class="sub">控除証明書が届いたら、金額を入れて照合しましょう。</p><a class="btn block" href="#tax">年末調整の準備をする</a>` : ""}
@@ -296,7 +301,7 @@ function viewList(){
     ${S.members.map(m=>`<button aria-pressed="${listFilter===m.id}" data-f="${m.id}">${esc(m.name)}</button>`).join("")}
   </div>
   ${pols.length ? `<ul class="list">${pols.map(p=>`<li><a href="#policy/${p.id}">
-    <div class="pol-top"><span class="pol-name">${esc(p.name||"名称未設定")}</span><span class="num">${yen(annual(p))}<span class="sub">/年</span></span></div>
+    <div class="pol-top"><span class="pol-name">${esc(p.name||"名称未設定")}</span><span class="num">${p.currency==="USD"?"約":""}${yen(annual(p))}<span class="sub">/年</span></span></div>
     <div class="pol-grid">
       <span>保険会社</span><span>${esc(p.company)||"—"}</span>
       <span>証券番号</span><span class="num">${esc(p.number)||"—"}</span>
@@ -311,7 +316,7 @@ function viewList(){
 
 function addPolicy(){
   const p = { id:uid(), company:"", name:"", type:"", number:"", contractor:"", payerId:S.settings.taxpayerId||"", insuredId:S.members[0]?.id||"", beneficiary:"",
-    premium:"", freq:"month", annualOverride:"", covers:[{kind:"",amount:""}], start:"", maturity:"", renewal:"", payEnd:"",
+    premium:"", currency:"JPY", premiumUsd:"", fxRate:"", freq:"month", annualOverride:"", covers:[{kind:"",amount:""}], start:"", maturity:"", renewal:"", payEnd:"",
     deduct:"none", regime:"new", certAmount:"", memo:"", photos:[] };
   S.policies.push(p); save(); location.hash = "#policy/"+p.id+"/new";
 }
@@ -361,10 +366,20 @@ function viewPolicy(id, mode){
     </fieldset>
     <fieldset><legend>保険料</legend>
       <div class="two">
-        <label class="f"><span>保険料（円）</span><input name="premium" value="${esc(p.premium)}" inputmode="numeric"></label>
+        <label class="f"><span>通貨</span>${sel("currency",p.currency||"JPY",[["JPY","円"],["USD","米ドル（ドル建）"]])}</label>
         <label class="f"><span>払い方</span>${sel("freq",p.freq,Object.entries(FREQ))}</label>
       </div>
-      <label class="f"><span>年間保険料（自動計算 <b class="num" id="autoAnnual">${yen(annual({...p,annualOverride:""}))}</b>。違う場合だけ入力）</span><input name="annualOverride" value="${esc(p.annualOverride)}" inputmode="numeric"></label>
+      <div id="jpyBox" ${p.currency==="USD"?"hidden":""}>
+        <label class="f"><span>保険料（円）</span><input name="premium" value="${esc(fmtDigits(p.premium))}" inputmode="numeric"></label>
+      </div>
+      <div id="usdBox" ${p.currency==="USD"?"":"hidden"}>
+        <div class="two">
+          <label class="f"><span>保険料（米ドル）</span><input name="premiumUsd" value="${esc(fmtDec(p.premiumUsd))}" inputmode="decimal"></label>
+          <label class="f"><span>換算レート（1ドル＝円）</span><input name="fxRate" value="${esc(p.fxRate)}" inputmode="decimal"></label>
+        </div>
+        <p class="note">円の額は「ドル×レート」の概算で、1回あたり <b class="num" id="usdYen"></b> です。ドル円で毎月変わります。控除証明書にレートが書かれていれば、それを入れてください。年末調整では、証明書の申告額が使われます。</p>
+      </div>
+      <label class="f"><span>年間保険料（自動計算 <b class="num" id="autoAnnual">${yen(annual({...p,annualOverride:""}))}</b>。違う場合だけ入力）</span><input name="annualOverride" value="${esc(fmtDigits(p.annualOverride))}" inputmode="numeric"></label>
     </fieldset>
     <fieldset><legend>保障内容</legend>
       <div id="covs"></div>
@@ -383,7 +398,7 @@ function viewPolicy(id, mode){
         <label class="f"><span>控除の区分</span>${sel("deduct",p.deduct,Object.entries(DEDUCT))}</label>
         <label class="f"><span>制度</span>${sel("regime",p.regime,[["new","新制度（2012年以降の契約）"],["old","旧制度（2011年以前の契約）"]])}</label>
       </div>
-      <label class="f"><span>今年の控除証明書の申告額（届いたら入力）</span><input name="certAmount" value="${esc(p.certAmount)}" inputmode="numeric"></label>
+      <label class="f"><span>今年の控除証明書の申告額（届いたら入力）</span><input name="certAmount" value="${esc(fmtDigits(p.certAmount))}" inputmode="numeric"></label>
       <div class="actions ed">
         <label class="btn ghost">控除証明書の写真から読み取る<input type="file" accept="image/*" id="ocr" hidden></label>
       </div>
@@ -402,12 +417,27 @@ function viewPolicy(id, mode){
   form.addEventListener("input", e=>{
     if(!edit) return;
     const t = e.target; if(!t.name || t.name.startsWith("cov")) return;
-    p[t.name] = ["premium","annualOverride","certAmount"].includes(t.name) ? t.value.replace(/[^\d]/g,"") : t.value;
+    if (COMMA_FIELDS[t.name] && t.type!=="select-one"){
+      const pos = t.selectionStart, keep = t.value.slice(0, pos == null ? t.value.length : pos).replace(/[^\d.]/g,"").length;
+      t.value = COMMA_FIELDS[t.name](t.value);
+      let n = 0, c = 0; while (c < t.value.length && n < keep){ if (/[\d.]/.test(t.value[c])) n++; c++; }
+      try{ t.setSelectionRange(c, c); }catch(_){}
+    }
+    p[t.name] = ["premium","annualOverride","certAmount"].includes(t.name) ? t.value.replace(/[^\d]/g,"")
+      : ["premiumUsd","fxRate"].includes(t.name) ? t.value.replace(/[^\d.]/g,"") : t.value;
     if (t.name==="name") app.querySelector("h1").textContent = p.name || "保険の登録";
-    if (["premium","freq"].includes(t.name)) document.getElementById("autoAnnual").textContent = yen(annual({...p,annualOverride:""}));
+    if (["premium","freq","currency","premiumUsd","fxRate"].includes(t.name)) refreshPremium();
     save();
   });
-  form.addEventListener("change", e=>{ if(edit && e.target.tagName==="SELECT" && !e.target.name.startsWith("cov")){ p[e.target.name]=e.target.value; save(); } });
+  form.addEventListener("change", e=>{ if(edit && e.target.tagName==="SELECT" && !e.target.name.startsWith("cov")){ p[e.target.name]=e.target.value; if(e.target.name==="currency"||e.target.name==="freq") refreshPremium(); save(); } });
+  // 通貨に合わせて入力欄を切り替え、円の概算と年間保険料を計算し直す
+  function refreshPremium(){
+    const usd = p.currency==="USD";
+    document.getElementById("jpyBox").hidden = usd; document.getElementById("usdBox").hidden = !usd;
+    document.getElementById("autoAnnual").textContent = yen(annual({...p,annualOverride:""}));
+    document.getElementById("usdYen").textContent = "約" + yen(Math.round((Number(p.premiumUsd)||0)*(Number(p.fxRate)||0)));
+  }
+  refreshPremium();
 
   const covs = document.getElementById("covs");
   function drawCovs(){
@@ -447,7 +477,7 @@ function viewPolicy(id, mode){
 
   // 控除証明書の写真から、制度・区分・申告額を読み取る
   const ocrMsg = document.getElementById("ocrMsg"), ocrCands = document.getElementById("ocrCands");
-  const setField = (name,val)=>{ const el = form.elements[name]; if(!el) return; el.value = val; p[name] = name==="certAmount" ? String(val).replace(/[^\d]/g,"") : el.value; };
+  const setField = (name,val)=>{ const el = form.elements[name]; if(!el) return; el.value = COMMA_FIELDS[name] ? COMMA_FIELDS[name](val) : val; p[name] = name==="certAmount" ? String(val).replace(/[^\d]/g,"") : el.value; };
   document.getElementById("ocr").addEventListener("change", async e=>{
     const f = (e.target.files||[])[0]; e.target.value=""; if(!f) return;
     ocrCands.innerHTML = ""; document.getElementById("ocrRaw").hidden = true;
@@ -613,7 +643,7 @@ function viewTax(){
   const t = taxSummary();
   const payer = S.settings.taxpayerId;
   const lines = (key,label)=>{ const rs = t.rows.filter(r=>r.p.deduct===key); if(!rs.length) return "";
-    return rs.map(r=>`<div class="tax-line"><span><a href="#policy/${r.p.id}">${esc(r.p.name||r.p.company||"名称未設定")}</a><br><span class="sub">${r.p.regime==="old"?"旧制度":"新制度"}・${r.cert!=null?"証明書の額":"登録からの見込み"}</span></span>
+    return rs.map(r=>`<div class="tax-line"><span><a href="#policy/${r.p.id}">${esc(r.p.name||r.p.company||"名称未設定")}</a><br><span class="sub">${r.p.regime==="old"?"旧制度":"新制度"}・${r.cert!=null?"証明書の額":"登録からの見込み"}${r.cert==null && r.p.currency==="USD" ? "（ドル建は為替で変わります。証明書の額を入れてください）":""}</span></span>
       <span class="num">${yen(r.amt)}${r.cert!=null && r.cert!==r.est ? `<br><span class="chip due">見込みと${yen(Math.abs(r.cert-r.est))}差</span>` : r.cert!=null ? `<br><span class="chip take">一致</span>`:""}</span></div>`).join(""); };
   app.innerHTML = `
   <h1>年末調整</h1>
