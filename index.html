@@ -113,6 +113,9 @@ table.map{border-collapse:collapse;min-width:100%}
 .warn{background:var(--due-soft);color:var(--due);border-radius:var(--r-sm);padding:10px 12px;font-size:.85rem;margin:0 0 12px}
 .note{font-size:.8rem;color:var(--sub)}
 .view .ed{display:none}
+.f.chk{display:flex;align-items:center;gap:10px;min-height:44px}
+.f.chk input{width:auto;min-height:0}
+.f.chk[hidden]{display:none}
 .view input:disabled,.view select:disabled,.view textarea:disabled{opacity:1;color:var(--ink);-webkit-text-fill-color:var(--ink);background:var(--paper);-webkit-appearance:none;appearance:none}
 .f input[type=date]::-webkit-date-and-time-value{text-align:left}
 .cands{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px}
@@ -127,16 +130,17 @@ table.map{border-collapse:collapse;min-width:100%}
   <a href="#list" data-tab="list"><span class="ic" aria-hidden="true">≡</span>保険一覧</a>
   <a href="#map" data-tab="map"><span class="ic" aria-hidden="true">▦</span>保障マップ</a>
   <a href="#tax" data-tab="tax"><span class="ic" aria-hidden="true">¥</span>年末調整</a>
+  <a href="#furusato" data-tab="furusato"><span class="ic" aria-hidden="true">♡</span>ふるさと</a>
   <a href="#settings" data-tab="settings"><span class="ic" aria-hidden="true">⚙</span>設定</a>
 </nav>
 
 <script>
 "use strict";
 /* ========== 定義 ========== */
-const TYPES = ["生命保険","医療保険","がん保険","学資保険","個人年金","就業不能保険","介護保険","自動車保険","火災保険","地震保険","傷害保険","共済","その他"];
+const TYPES = ["生命保険","医療保険","がん保険","学資保険","個人年金","就業不能保険","介護保険","自動車保険","火災保険","地震保険","傷害保険","共済","iDeCo","その他"];
 const COVERS = ["死亡","入院","手術","がん","三大疾病","介護","就業不能","個人賠償","火災","地震","自動車","学資","年金","その他"];
 const FREQ = {month:"月払い", year:"年払い", once:"一時払い"};
-const DEDUCT = {general:"一般生命保険料", medical:"介護医療保険料", pension:"個人年金保険料", quake:"地震保険料", oldLong:"旧長期損害保険料", none:"控除の対象外"};
+const DEDUCT = {general:"一般生命保険料", medical:"介護医療保険料", pension:"個人年金保険料", quake:"地震保険料", oldLong:"旧長期損害保険料", smallbiz:"小規模企業共済等掛金（iDeCoなど）", none:"控除の対象外"};
 const RELS = ["本人","配偶者","子","父","母","その他"];
 
 /* ========== 保存（IndexedDB） ========== */
@@ -152,9 +156,9 @@ async function dbKeys(){ const db = await idb(); return new Promise((res,rej)=>{
 /* 保存の形（2026年10月）：写真は1枚ずつ "photo:<id>" に分けて保存し、"state" には写真を含めない。
    入力のたびに写真まで保存し直すと重くなるため。書き出すファイルの形は変えていない（写真も含む）。 */
 const SCHEMA = 2, PHOTO_KEY = id => "photo:"+id;
-const blank = ()=> ({ members:[], policies:[], photos:{}, settings:{ taxpayerId:"", taxYear:new Date().getFullYear() } });
+const blank = ()=> ({ members:[], policies:[], donations:[], photos:{}, settings:{ taxpayerId:"", taxYear:new Date().getFullYear(), furusatoLimit:{} } });
 function normalize(d){ const b = blank(); d = d || {};
-  return {...b, ...d, members:d.members||[], policies:d.policies||[], photos:d.photos||{}, settings:{...b.settings, ...(d.settings||{})}}; }
+  return {...b, ...d, members:d.members||[], policies:d.policies||[], donations:d.donations||[], photos:d.photos||{}, settings:{...b.settings, ...(d.settings||{})}}; }
 let S = blank();
 const stateOnly = ()=> { const {photos, ...rest} = S; return {...rest, schema:SCHEMA}; };
 /* 写真を別に保存してから、写真を含まない state を書く（途中で止まっても古い state は残る） */
@@ -216,6 +220,14 @@ function deadlines(){
       if (p[k]) out.push({p, label, date:p[k], days:daysUntil(p[k])});
     }
   }
+  // ふるさと納税のワンストップ特例の申請書：寄附した年の翌年1月10日必着が目安（未提出のもの）
+  for (const d of S.donations||[]){
+    if (d.method==="onestop" && !d.submitted && /^\d{4}-/.test(d.date||"")){
+      const due = (Number(d.date.slice(0,4))+1)+"-01-10";
+      out.push({p:{id:d.id,name:"ふるさと納税 "+(d.city||"")}, href:"#donation/"+d.id, label:"申請書の期限", date:due, days:daysUntil(due),
+        sub: esc(fmtDate(due))+"（ワンストップ特例の申請書。1月10日必着が目安）"});
+    }
+  }
   return out.filter(d=>d.days>=-30).sort((a,b)=>a.days-b.days);
 }
 
@@ -236,7 +248,7 @@ function calcOldLong(p){ if(p<=0) return 0; if(p<=10000) return p; if(p<=20000) 
 function taxSummary(){
   const payer = S.settings.taxpayerId;
   const target = S.policies.filter(p => p.deduct && p.deduct!=="none" && (!payer || p.payerId===payer));
-  const sum = {general:{n:0,o:0}, medical:{n:0,o:0}, pension:{n:0,o:0}, quake:0, oldLong:0};
+  const sum = {general:{n:0,o:0}, medical:{n:0,o:0}, pension:{n:0,o:0}, quake:0, oldLong:0, smallbiz:0};
   const rows = [];
   for (const p of target){
     const cert = p.certAmount !== "" && p.certAmount != null ? Number(p.certAmount) : null;
@@ -244,6 +256,7 @@ function taxSummary(){
     rows.push({p, amt, est:annual(p), cert});
     if (p.deduct==="quake") sum.quake += amt;
     else if (p.deduct==="oldLong") sum.oldLong += amt;
+    else if (p.deduct==="smallbiz") sum.smallbiz += amt;
     else if (sum[p.deduct]) sum[p.deduct][p.regime==="old"?"o":"n"] += amt;
   }
   // 令和8年分以降の特例（23歳未満の扶養親族を有し、新生命保険料を支払った場合）
@@ -256,7 +269,7 @@ function taxSummary(){
   const y = calcCategory(sum.pension.n, sum.pension.o);
   const life = Math.min(120000, g+m+y);
   const quake = Math.min(50000, Math.min(50000, sum.quake) + calcOldLong(sum.oldLong));
-  return {rows, sum, g, m, y, life, quake, special};
+  return {rows, sum, g, m, y, life, quake, special, smallbiz: sum.smallbiz};
 }
 
 /* ========== 画面 ========== */
@@ -279,10 +292,10 @@ function viewHome(){
   </div>
   ${taxSeason ? `<h2>年末調整の時期です</h2><p class="sub">控除証明書が届いたら、金額を入れて照合しましょう。</p><a class="btn block" href="#tax">年末調整の準備をする</a>` : ""}
   <h2>近い期限</h2>
-  ${dl.length ? `<ul class="list">${dl.map(d=>`<li><a href="#policy/${d.p.id}">
+  ${dl.length ? `<ul class="list">${dl.map(d=>`<li><a href="${d.href||"#policy/"+d.p.id}">
       <div class="pol-top"><span class="pol-name">${esc(d.p.name||d.p.company||"名称未設定")}</span>
       <span class="chip ${d.days<=90?"due":""}">${d.label} ${d.days<0?"過ぎています":d.days===0?"今日":`あと${d.days}日`}</span></div>
-      <div class="sub">${fmtDate(d.date)}・${esc(mname(d.p.insuredId))}</div></a></li>`).join("")}</ul>`
+      <div class="sub">${d.sub ?? (fmtDate(d.date)+"・"+esc(mname(d.p.insuredId)))}</div></a></li>`).join("")}</ul>`
     : `<div class="empty"><p>満期や更新の日を登録すると、ここに近い順で並びます。</p></div>`}
   ${!S.members.length ? `<h2>はじめに</h2><div class="empty"><p>まず家族を登録してから、保険を登録します。</p><a class="btn" href="#settings">家族を登録する</a></div>`
     : !S.policies.length ? `<h2>はじめに</h2><div class="empty"><p>手元の保険証券を1枚用意して、最初の保険を登録しましょう。</p><button class="btn" id="addFirst">保険を登録する</button></div>` : ""}
@@ -662,8 +675,132 @@ function viewTax(){
     <div class="tax-total"><span>申告書に書く合計の目安</span><span class="v num">${yen(t.life)}</span></div></div>
   <div class="tax-card"><h3>地震保険料控除</h3>${lines("quake")}${lines("oldLong") || (lines("quake")?"":`<p class="sub">対象の保険はありません</p>`)}
     <div class="tax-total"><span>控除額の目安（上限5万円）</span><span class="v num">${yen(t.quake)}</span></div></div>
+  <div class="tax-card"><h3>iDeCo（小規模企業共済等掛金控除）</h3>${lines("smallbiz") || `<p class="sub">対象はありません。保険として登録し、控除の区分を「小規模企業共済等掛金（iDeCoなど）」にします。</p>`}
+    <div class="tax-total"><span>控除額の目安（掛金の全額）</span><span class="v num">${yen(t.smallbiz)}</span></div>
+    <p class="note">掛金の上限額は、加入区分で違うためここでは計算しません。証明書の額を入れてください。給料から天引きで会社が払い込んでいる場合は、会社側で処理されて、証明書の提出がいらないことがあります。</p></div>
+  <div class="tax-card"><h3>ふるさと納税</h3><p class="sub">年末調整では扱えません。確定申告か、ワンストップ特例の申請書で手続きします。</p><a class="btn ghost" href="#furusato">ふるさと納税の画面へ</a></div>
   <p class="note">所得税の控除額の目安です（国税庁 No.1140・No.1145の計算式）。控除証明書の申告額を各保険に入力すると、その金額で計算し、登録からの見込みとの差を表示します。最終的な金額は必ず控除証明書で確認してください。</p>`;
   app.querySelectorAll(".seg button").forEach(b=> b.onclick = ()=>{ S.settings.taxpayerId=b.dataset.p; save(); viewTax(); });
+}
+
+/* ========== ふるさと納税 ========== */
+const DON_METHOD = {onestop:"ワンストップ特例", kakutei:"確定申告"};
+const todayStr = ()=>{ const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+function addDonation(){
+  const d = { id:uid(), date:todayStr(), city:"", amount:"", payerId:S.settings.taxpayerId||S.members[0]?.id||"", method:"onestop", receipt:false, submitted:false, memo:"" };
+  S.donations.push(d); saveReal(); location.hash = "#donation/"+d.id+"/new";
+}
+function viewFurusato(){
+  setTab("furusato");
+  const year = Number(S.settings.taxYear)||new Date().getFullYear();
+  const payer = S.settings.taxpayerId, key = payer || "_";
+  const mine = S.donations.filter(d=> String(d.date||"").startsWith(String(year)) && (!payer || d.payerId===payer));
+  const total = mine.reduce((s,d)=>s+(Number(d.amount)||0),0);
+  const limit = Number((S.settings.furusatoLimit||{})[key])||0;
+  const ones = mine.filter(d=>d.method==="onestop");
+  const cities = new Set(ones.map(d=>(d.city||"").trim()).filter(Boolean));
+  const pending = ones.filter(d=>!d.submitted).length;
+  const restHtml = ()=>{ const rest = limit - total; return limit
+    ? `<span>${rest>=0?"上限までの残り":"上限を超えています"}</span><span class="v num">${yen(Math.abs(rest))}</span>`
+    : `<span>上限額を入れると、残りが出ます</span><span class="v num">—</span>`; };
+  app.innerHTML = `
+  <h1>ふるさと納税</h1>
+  <p class="hint">ふるさと納税は、年末調整では扱えません。確定申告をするか、ワンストップ特例の申請書を自治体に出して手続きします。</p>
+  <div class="seg" role="group" aria-label="寄附した人">
+    ${S.members.map(m=>`<button aria-pressed="${payer===m.id}" data-p="${m.id}">${esc(m.name)}</button>`).join("") || `<span class="sub">設定で家族を登録してください</span>`}
+  </div>
+  <div class="tax-card"><h3>${year}年の寄附</h3>
+    <div class="tax-line"><span>寄附額の合計（${mine.length}件）</span><span class="num">${yen(total)}</span></div>
+    <label class="f" style="margin-top:8px"><span>控除上限額の目安（お使いのシミュレーターで出した額）</span><input id="limit" value="${esc(fmtDigits(limit||""))}" inputmode="numeric"></label>
+    <div class="tax-total" id="rest">${restHtml()}</div>
+    <p class="note">寄附額から2,000円を引いた額が、所得税・住民税の控除の対象になります（上限額の範囲内）。上限額は収入や家族の状況で変わるため、このアプリでは計算しません。</p></div>
+  <div class="tax-card"><h3>ワンストップ特例</h3>
+    <div class="tax-line"><span>ワンストップ特例の寄附先</span><span class="num">${cities.size}自治体</span></div>
+    <div class="tax-line"><span>申請書をまだ出していない寄附</span><span class="num">${pending}件</span></div>
+    ${cities.size>5 ? `<p class="warn">ワンストップ特例は、1年間の寄附先が5自治体までです。超えると、すべての寄附を確定申告に入れる必要があります。</p>` : ""}
+    <p class="note">申請書は、寄附した年の翌年1月10日必着が目安です（${year+1}年1月10日）。医療費控除などで確定申告をする年は、ワンストップ特例は使えず、すべての寄附を確定申告に入れます。同じ自治体は、同じ名前で入れてください（数えるため）。</p></div>
+  ${mine.length ? `<ul class="list">${mine.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(d=>`<li><a href="#donation/${d.id}">
+    <div class="pol-top"><span class="pol-name">${esc(d.city||"自治体未入力")}</span><span class="num">${yen(Number(d.amount)||0)}</span></div>
+    <div class="sub">${esc(fmtDate(d.date))}・${DON_METHOD[d.method]||""}・${esc(mname(d.payerId))}</div>
+    <div class="sub"><span class="chip ${d.receipt?"take":"due"}">受領証明書 ${d.receipt?"届いた":"まだ"}</span> ${d.method==="onestop" ? `<span class="chip ${d.submitted?"take":"due"}">申請書 ${d.submitted?"提出ずみ":"まだ"}</span>` : ""}</div></a></li>`).join("")}</ul>`
+    : `<div class="empty"><p>寄附をしたら、ここに記録します。</p></div>`}
+  <div class="actions"><button class="btn" id="addDon">寄附を追加する</button></div>`;
+  app.querySelectorAll(".seg button").forEach(b=> b.onclick = ()=>{ S.settings.taxpayerId=b.dataset.p; saveReal(); viewFurusato(); });
+  document.getElementById("addDon").onclick = addDonation;
+  const inp = document.getElementById("limit");
+  inp.addEventListener("input", ()=>{
+    const pos = inp.selectionStart, keep = inp.value.slice(0,pos==null?inp.value.length:pos).replace(/[^\d]/g,"").length;
+    inp.value = fmtDigits(inp.value);
+    let n=0,c=0; while(c<inp.value.length && n<keep){ if(/\d/.test(inp.value[c])) n++; c++; }
+    try{ inp.setSelectionRange(c,c); }catch(_){}
+    S.settings.furusatoLimit = S.settings.furusatoLimit||{}; S.settings.furusatoLimit[key] = inp.value.replace(/[^\d]/g,"");
+    const lim = Number(S.settings.furusatoLimit[key])||0, rest = lim-total;
+    document.getElementById("rest").innerHTML = lim ? `<span>${rest>=0?"上限までの残り":"上限を超えています"}</span><span class="v num">${yen(Math.abs(rest))}</span>` : `<span>上限額を入れると、残りが出ます</span><span class="v num">—</span>`;
+    saveReal();
+  });
+}
+function viewDonation(id, mode){
+  setTab("furusato");
+  const orig = S.donations.find(x=>x.id===id);
+  if(!orig){ app.innerHTML = `<div class="empty"><p>この寄附は見つかりません。削除された可能性があります。</p><a class="btn" href="#furusato">ふるさと納税に戻る</a></div>`; return; }
+  const edit = mode==="edit" || mode==="new";
+  const d = edit ? JSON.parse(JSON.stringify(orig)) : orig;
+  const bar = edit ? `<div class="actions"><button type="button" class="btn saveBtn">保存する</button><button type="button" class="btn ghost cancelBtn">キャンセル</button></div>` : "";
+  app.innerHTML = `
+  <p><a href="#furusato" class="sub">‹ ふるさと納税</a></p>
+  <h1>${esc(d.city||"寄附の記録")}</h1>
+  ${edit ? `<p class="hint">「保存する」を押すまで、変更は保存されません。</p>${bar}` : `<div class="actions"><button type="button" class="btn" id="editBtn">修正する</button></div>`}
+  <form id="df" class="${edit?"":"view"}" autocomplete="off">
+    <fieldset><legend>寄附</legend>
+      <div class="two">
+        <label class="f"><span>寄附した日</span><input type="date" name="date" value="${esc(d.date)}"></label>
+        <label class="f"><span>寄附額（円）</span><input name="amount" value="${esc(fmtDigits(d.amount))}" inputmode="numeric"></label>
+      </div>
+      <label class="f"><span>自治体（例：○○県○○市）</span><input name="city" value="${esc(d.city)}"></label>
+      <label class="f"><span>寄附した人</span>${sel("payerId",d.payerId,memberOpts(),"選択")}</label>
+    </fieldset>
+    <fieldset><legend>手続き</legend>
+      <label class="f"><span>手続きの方法</span>${sel("method",d.method,Object.entries(DON_METHOD))}</label>
+      <label class="f chk"><input type="checkbox" name="receipt" ${d.receipt?"checked":""}> 寄附金受領証明書が届いた</label>
+      <label class="f chk" id="subBox" ${d.method==="onestop"?"":"hidden"}><input type="checkbox" name="submitted" ${d.submitted?"checked":""}> ワンストップ特例の申請書を出した</label>
+    </fieldset>
+    <fieldset><legend>メモ</legend>
+      <label class="f"><span>返礼品、受付番号など</span><textarea name="memo">${esc(d.memo)}</textarea></label>
+    </fieldset>
+  </form>
+  ${edit ? bar : `<div class="actions"><button type="button" class="btn danger" id="del">この寄附を削除する</button></div>`}`;
+  const form = document.getElementById("df");
+  if (!edit) form.querySelectorAll("fieldset").forEach(f=>f.disabled = true);
+  form.addEventListener("input", e=>{
+    if(!edit) return;
+    const t = e.target; if(!t.name) return;
+    if (t.name==="amount"){
+      const pos = t.selectionStart, keep = t.value.slice(0,pos==null?t.value.length:pos).replace(/[^\d]/g,"").length;
+      t.value = fmtDigits(t.value);
+      let n=0,c=0; while(c<t.value.length && n<keep){ if(/\d/.test(t.value[c])) n++; c++; }
+      try{ t.setSelectionRange(c,c); }catch(_){}
+      d.amount = t.value.replace(/[^\d]/g,"");
+    } else d[t.name] = t.type==="checkbox" ? t.checked : t.value;
+    if (t.name==="method") document.getElementById("subBox").hidden = d.method!=="onestop";
+    if (t.name==="city") app.querySelector("h1").textContent = d.city || "寄附の記録";
+  });
+  form.addEventListener("change", e=>{ const t=e.target; if(!edit||!t.name) return;
+    if (t.tagName==="SELECT"||t.type==="checkbox"){ d[t.name] = t.type==="checkbox" ? t.checked : t.value; if(t.name==="method") document.getElementById("subBox").hidden = d.method!=="onestop"; } });
+  const delBtn = document.getElementById("del");
+  if (delBtn) delBtn.onclick = ()=>{
+    const nm = d.city || "この寄附";
+    if(!confirm(`「${nm}」の記録を削除しますか？`)) return;
+    if(!confirm(`本当に削除しますか？\n「${nm}」の記録が消えて、元に戻せません。`)) return;
+    S.donations = S.donations.filter(x=>x.id!==d.id); saveReal(); location.hash="#furusato";
+  };
+  const editBtn = document.getElementById("editBtn");
+  if (editBtn) editBtn.onclick = ()=>{ location.hash = "#donation/"+orig.id+"/edit"; };
+  app.querySelectorAll(".saveBtn").forEach(b=> b.onclick = ()=>{ Object.assign(orig, d); saveReal(); location.hash = "#donation/"+orig.id; });
+  app.querySelectorAll(".cancelBtn").forEach(b=> b.onclick = ()=>{
+    if (JSON.stringify(d)!==JSON.stringify(orig) && !confirm("変更を保存せずに戻ります。よろしいですか？")) return;
+    if (mode==="new"){ S.donations = S.donations.filter(x=>x.id!==orig.id); saveReal(); location.hash="#furusato"; }
+    else location.hash = "#donation/"+orig.id;
+  });
 }
 
 function viewSettings(){
@@ -717,7 +854,7 @@ function route(){
   const h = location.hash.slice(1) || "home";
   const [name,arg,sub] = h.split("/");
   window.scrollTo(0,0);
-  ({home:viewHome, list:viewList, map:viewMap, tax:viewTax, settings:viewSettings, policy:()=>viewPolicy(arg,sub)}[name] || viewHome)();
+  ({home:viewHome, list:viewList, map:viewMap, tax:viewTax, settings:viewSettings, policy:()=>viewPolicy(arg,sub), furusato:viewFurusato, donation:()=>viewDonation(arg,sub)}[name] || viewHome)();
 }
 window.addEventListener("hashchange", route);
 
