@@ -112,6 +112,9 @@ table.map{border-collapse:collapse;min-width:100%}
 .tax-total .v{font-size:1.4rem}
 .warn{background:var(--due-soft);color:var(--due);border-radius:var(--r-sm);padding:10px 12px;font-size:.85rem;margin:0 0 12px}
 .note{font-size:.8rem;color:var(--sub)}
+.view .ed{display:none}
+.view input:disabled,.view select:disabled,.view textarea:disabled{opacity:1;color:var(--ink);-webkit-text-fill-color:var(--ink);background:var(--paper);-webkit-appearance:none;appearance:none}
+.f input[type=date]::-webkit-date-and-time-value{text-align:left}
 .cands{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}
 </style>
@@ -182,6 +185,7 @@ function save(){
     catch(e){ flash("保存できませんでした。容量を確認してください"); }
   }, 300);
 }
+const saveReal = save;
 function flash(msg){ const el = document.getElementById("saved"); el.textContent = msg; el.classList.add("on"); clearTimeout(flash.t); flash.t = setTimeout(()=>el.classList.remove("on"),1200); }
 
 /* ========== 便利関数 ========== */
@@ -309,24 +313,32 @@ function addPolicy(){
   const p = { id:uid(), company:"", name:"", type:"", number:"", contractor:"", payerId:S.settings.taxpayerId||"", insuredId:S.members[0]?.id||"", beneficiary:"",
     premium:"", freq:"month", annualOverride:"", covers:[{kind:"",amount:""}], start:"", maturity:"", renewal:"", payEnd:"",
     deduct:"none", regime:"new", certAmount:"", memo:"", photos:[] };
-  S.policies.push(p); save(); location.hash = "#policy/"+p.id;
+  S.policies.push(p); save(); location.hash = "#policy/"+p.id+"/new";
 }
 
 function sel(name, val, opts, blank){ return `<select name="${name}">${blank?`<option value="">${blank}</option>`:""}${opts.map(([v,l])=>`<option value="${esc(v)}" ${String(v)===String(val)?"selected":""}>${esc(l)}</option>`).join("")}</select>`; }
 const memberOpts = ()=> S.members.map(m=>[m.id,m.name]);
 
-function viewPolicy(id){
+function viewPolicy(id, mode){
   setTab("list");
-  const p = S.policies.find(x=>x.id===id);
-  if(!p){ app.innerHTML = `<div class="empty"><p>この保険は見つかりません。削除された可能性があります。</p><a class="btn" href="#list">保険一覧に戻る</a></div>`; return; }
+  const orig = S.policies.find(x=>x.id===id);
+  if(!orig){ app.innerHTML = `<div class="empty"><p>この保険は見つかりません。削除された可能性があります。</p><a class="btn" href="#list">保険一覧に戻る</a></div>`; return; }
+  // 標準は「見るだけ」。「修正する」を押すと、写しを直す画面になり、「保存する」を押すまで元の内容は変わらない
+  const edit = mode==="edit" || mode==="new";
+  const p = edit ? JSON.parse(JSON.stringify(orig)) : orig;
+  const save = edit ? (()=>{}) : saveReal;
+  const bar = edit
+    ? `<div class="actions"><button type="button" class="btn saveBtn">保存する</button><button type="button" class="btn ghost cancelBtn">キャンセル</button></div>`
+    : "";
   app.innerHTML = `
   <p><a href="#list" class="sub">‹ 保険一覧</a></p>
   <h1>${esc(p.name||"保険の登録")}</h1>
-  <p class="hint">iPhoneでは、入力欄をタップして表示されるメニューの「テキストをスキャン」で、証券の文字をカメラから取り込めます。入力はその場で自動保存されます。</p>
-  <form id="pf" autocomplete="off">
+  ${edit ? `<p class="hint">「保存する」を押すまで、変更は保存されません。iPhoneでは、入力欄をタップして表示されるメニューの「テキストをスキャン」で、証券の文字をカメラから取り込めます。</p>${bar}`
+         : `<div class="actions"><button type="button" class="btn" id="editBtn">修正する</button></div>`}
+  <form id="pf" class="${edit?"":"view"}" autocomplete="off">
     <fieldset><legend>証券の写真</legend>
       <div class="photos" id="photos"></div>
-      <div class="actions">
+      <div class="actions ed">
         <label class="btn ghost">写真を撮る<input type="file" accept="image/*" capture="environment" id="ph" hidden></label>
         <label class="btn ghost">写真から選ぶ<input type="file" accept="image/*" multiple id="ph2" hidden></label>
       </div>
@@ -356,7 +368,7 @@ function viewPolicy(id){
     </fieldset>
     <fieldset><legend>保障内容</legend>
       <div id="covs"></div>
-      <button type="button" class="btn ghost" id="addCov">保障を追加する</button>
+      <button type="button" class="btn ghost ed" id="addCov">保障を追加する</button>
     </fieldset>
     <fieldset><legend>期限</legend>
       <div class="two">
@@ -372,10 +384,10 @@ function viewPolicy(id){
         <label class="f"><span>制度</span>${sel("regime",p.regime,[["new","新制度（2012年以降の契約）"],["old","旧制度（2011年以前の契約）"]])}</label>
       </div>
       <label class="f"><span>今年の控除証明書の申告額（届いたら入力）</span><input name="certAmount" value="${esc(p.certAmount)}" inputmode="numeric"></label>
-      <div class="actions">
+      <div class="actions ed">
         <label class="btn ghost">控除証明書の写真から読み取る<input type="file" accept="image/*" id="ocr" hidden></label>
       </div>
-      <p class="sub" id="ocrMsg">写真の文字を端末の中で読み取り、制度・区分・申告額の候補を入れます。写真は外に送りません。読み取りは間違えることがあるので、証明書と見比べてください。</p>
+      <p class="sub ed" id="ocrMsg">写真の文字を端末の中で読み取り、制度・区分・申告額の候補を入れます。写真は外に送りません。読み取りは間違えることがあるので、証明書と見比べてください。</p>
       <div class="cands" id="ocrCands"></div>
       <details id="ocrRaw" hidden><summary class="sub">読み取った文字を見る</summary><pre class="note" id="ocrText" style="white-space:pre-wrap"></pre></details>
     </fieldset>
@@ -383,24 +395,26 @@ function viewPolicy(id){
       <label class="f"><span>担当者の連絡先など</span><textarea name="memo">${esc(p.memo)}</textarea></label>
     </fieldset>
   </form>
-  <div class="actions"><button class="btn danger" id="del">この保険を削除する</button></div>`;
+  ${edit ? bar : `<div class="actions"><button type="button" class="btn danger" id="del">この保険を削除する</button></div>`}`;
 
   const form = document.getElementById("pf");
+  if (!edit) form.querySelectorAll("fieldset").forEach(f=>f.disabled = true);
   form.addEventListener("input", e=>{
+    if(!edit) return;
     const t = e.target; if(!t.name || t.name.startsWith("cov")) return;
     p[t.name] = ["premium","annualOverride","certAmount"].includes(t.name) ? t.value.replace(/[^\d]/g,"") : t.value;
     if (t.name==="name") app.querySelector("h1").textContent = p.name || "保険の登録";
     if (["premium","freq"].includes(t.name)) document.getElementById("autoAnnual").textContent = yen(annual({...p,annualOverride:""}));
     save();
   });
-  form.addEventListener("change", e=>{ if(e.target.tagName==="SELECT" && !e.target.name.startsWith("cov")){ p[e.target.name]=e.target.value; save(); } });
+  form.addEventListener("change", e=>{ if(edit && e.target.tagName==="SELECT" && !e.target.name.startsWith("cov")){ p[e.target.name]=e.target.value; save(); } });
 
   const covs = document.getElementById("covs");
   function drawCovs(){
     covs.innerHTML = p.covers.map((c,i)=>`<div class="cov-row">
       <select name="covKind" data-i="${i}" aria-label="保障の種類"><option value="">種類</option>${COVERS.map(k=>`<option ${k===c.kind?"selected":""}>${k}</option>`).join("")}</select>
       <input name="covAmount" data-i="${i}" value="${esc(c.amount)}" placeholder="例：日額5,000円" aria-label="保障の金額">
-      <button type="button" data-rm="${i}" aria-label="この保障を削除">×</button></div>`).join("");
+      <button type="button" class="ed" data-rm="${i}" aria-label="この保障を削除">×</button></div>`).join("");
   }
   drawCovs();
   covs.addEventListener("input", e=>{ const i=e.target.dataset.i; if(i==null) return; if(e.target.name==="covKind") p.covers[i].kind=e.target.value; else p.covers[i].amount=e.target.value; save(); });
@@ -415,7 +429,7 @@ function viewPolicy(id){
   drawPhotos();
   photos.addEventListener("click", e=>{
     const pid = e.target.dataset.pid;
-    if (pid){ if(!confirm("この写真を削除しますか？")) return; p.photos = p.photos.filter(x=>x!==pid); delete S.photos[pid]; drawPhotos(); save(); dbDel(PHOTO_KEY(pid)).catch(()=>{}); return; }
+    if (pid){ if(!confirm("この写真を削除しますか？")) return; p.photos = p.photos.filter(x=>x!==pid); drawPhotos(); return; }
     if (e.target.tagName==="IMG"){ const w = window.open(); if(w) w.document.write(`<img src="${e.target.src}" style="width:100%">`); }
   });
   async function addPhotos(e){
@@ -474,11 +488,29 @@ function viewPolicy(id){
     }
   });
   ocrCands.addEventListener("click", e=>{ const v = e.target.dataset.v; if(!v) return; setField("certAmount", v); save(); ocrMsg.textContent = "申告額を "+yen(Number(v))+" にしました。"; });
-  document.getElementById("del").onclick = ()=>{
-    if(!confirm(`「${p.name||"この保険"}」を削除しますか？元に戻せません。`)) return;
+  const delBtn = document.getElementById("del");
+  if (delBtn) delBtn.onclick = ()=>{
+    const nm = p.name || "この保険";
+    if(!confirm(`「${nm}」を削除しますか？`)) return;
+    if(!confirm(`本当に削除しますか？\n「${nm}」の内容と写真が消えて、元に戻せません。`)) return;
     (p.photos||[]).forEach(pid=>{ delete S.photos[pid]; dbDel(PHOTO_KEY(pid)).catch(()=>{}); });
-    S.policies = S.policies.filter(x=>x.id!==p.id); save(); location.hash="#list";
+    S.policies = S.policies.filter(x=>x.id!==p.id); saveReal(); location.hash="#list";
   };
+  const editBtn = document.getElementById("editBtn");
+  if (editBtn) editBtn.onclick = ()=>{ location.hash = "#policy/"+orig.id+"/edit"; };
+  const dropPhotos = ids => ids.forEach(pid=>{ delete S.photos[pid]; dbDel(PHOTO_KEY(pid)).catch(()=>{}); });
+  app.querySelectorAll(".saveBtn").forEach(b=> b.onclick = ()=>{
+    dropPhotos((orig.photos||[]).filter(x=>!(p.photos||[]).includes(x)));   // 消した写真を実際に消す
+    Object.assign(orig, p);
+    saveReal(); location.hash = "#policy/"+orig.id;
+  });
+  app.querySelectorAll(".cancelBtn").forEach(b=> b.onclick = ()=>{
+    const changed = JSON.stringify(p) !== JSON.stringify(orig);
+    if (changed && !confirm("変更を保存せずに戻ります。よろしいですか？")) return;
+    dropPhotos((p.photos||[]).filter(x=>!(orig.photos||[]).includes(x)));   // 今回足した写真を消す
+    if (mode==="new"){ S.policies = S.policies.filter(x=>x.id!==orig.id); saveReal(); location.hash = "#list"; }
+    else location.hash = "#policy/"+orig.id;
+  });
 }
 
 function shrink(file, max, q){
@@ -653,9 +685,9 @@ function viewSettings(){
 /* ========== ルーティング ========== */
 function route(){
   const h = location.hash.slice(1) || "home";
-  const [name,arg] = h.split("/");
+  const [name,arg,sub] = h.split("/");
   window.scrollTo(0,0);
-  ({home:viewHome, list:viewList, map:viewMap, tax:viewTax, settings:viewSettings, policy:()=>viewPolicy(arg)}[name] || viewHome)();
+  ({home:viewHome, list:viewList, map:viewMap, tax:viewTax, settings:viewSettings, policy:()=>viewPolicy(arg,sub)}[name] || viewHome)();
 }
 window.addEventListener("hashchange", route);
 
