@@ -79,7 +79,7 @@ legend{font-weight:700;font-size:1rem;margin:22px 0 8px;padding:0}
 .f textarea{min-height:80px}
 .two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 10px}
 .two>.f{min-width:0}
-.f input[type=date]{min-width:0;max-width:100%}
+.f input[type=date]{min-width:0;max-width:100%;-webkit-appearance:none;appearance:none;display:block;text-align:left}
 .hint{background:var(--ai-soft);color:var(--ai);border-radius:var(--r-sm);padding:10px 12px;font-size:.85rem;margin:0 0 12px}
 .saved{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);
   font-size:.8rem;padding:4px 12px;border-radius:999px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20}
@@ -437,27 +437,37 @@ function viewPolicy(id){
   document.getElementById("ocr").addEventListener("change", async e=>{
     const f = (e.target.files||[])[0]; e.target.value=""; if(!f) return;
     ocrCands.innerHTML = ""; document.getElementById("ocrRaw").hidden = true;
-    ocrMsg.textContent = "読み取り中です。初回は読み取り用のデータ（約10MB）を読み込むため、1分ほどかかることがあります。";
+    ocrMsg.textContent = "読み取り中です。初回は読み取り用のデータ（数MB）を読み込むため、時間がかかります。画面を閉じずにお待ちください。";
+    // 写真は文字認識の設定で結果が変わるため、3通りで読み取って、同じ値が出たものを採用する
+    const passes = [ {max:2000, gray:false, psm:"4"}, {max:2000, gray:false, psm:"3"}, {max:3000, gray:true, psm:"3"} ];
+    let cur = 0;
     try{
-      const img = await shrink(f, 2000, 0.9);
       const T = await loadOcr();
-      const worker = await T.createWorker("jpn", 1, { langPath:"https://tessdata.projectnaptha.com/4.0.0_fast",
-        logger: m=>{ if(m.status==="recognizing text") ocrMsg.textContent = "読み取り中… "+Math.round((m.progress||0)*100)+"%"; } });
-      const { data } = await worker.recognize(img);
+      const worker = await T.createWorker("jpn", 1, { langPath:"https://cdn.jsdelivr.net/npm/@tesseract.js-data/jpn@1.0.0/4.0.0_best_int",
+        logger: m=>{ if(m.status==="recognizing text") ocrMsg.textContent = `読み取り中（${cur+1}/${passes.length}回目）… ${Math.round((m.progress||0)*100)}%`; } });
+      const texts = [], rs = [];
+      for (cur=0; cur<passes.length; cur++){
+        const ps = passes[cur];
+        let img = await shrink(f, ps.max, 0.9); if (ps.gray) img = await grayStretch(img);
+        await worker.setParameters({ tessedit_pageseg_mode: ps.psm });
+        const { data } = await worker.recognize(img);
+        texts.push(data.text); rs.push(parseCert(data.text));
+      }
       await worker.terminate();
-      document.getElementById("ocrText").textContent = data.text; document.getElementById("ocrRaw").hidden = false;
-      const r = parseCert(data.text);
+      document.getElementById("ocrText").textContent = texts.map((t,i)=>`--- ${i+1}回目 ---\n${t}`).join("\n\n"); document.getElementById("ocrRaw").hidden = false;
+      const r = mergeCerts(rs);
       const said = [];
       if (r.regime){ setField("regime", r.regime); said.push("制度＝"+(r.regime==="old"?"旧制度":"新制度")); }
       if (r.deduct){ setField("deduct", r.deduct); said.push("区分＝"+DEDUCT[r.deduct]); }
-      if (r.amount!=null){
-        if (!p.certAmount || Number(p.certAmount)===r.amount){ setField("certAmount", r.amount); said.push("申告額＝"+yen(r.amount)+(r.basis==="申告額"?"（12月まで払った場合の年間額）":"（証明額）")); }
+      let warn = "";
+      if (r.amount!=null && r.votes>=2){
+        if (!p.certAmount || Number(p.certAmount)===r.amount){ setField("certAmount", r.amount); said.push("申告額＝"+yen(r.amount)+(r.basis==="申告額"?"（12月まで払った場合の年間額）":"（証明額）")+`、${r.total}回中${r.votes}回で同じ値`); }
         else said.push("申告額の候補＝"+yen(r.amount)+"（入力ずみの額は変えていません）");
-      }
+      } else if (r.amount!=null){ warn = "申告額は読み取りが安定せず、入れていません。下の候補から選ぶか、手で入力してください。"; }
       save();
-      ocrMsg.textContent = said.length
-        ? "読み取り結果：" + said.join("、") + "。証明書と見比べて、違っていれば直してください。"
-        : "読み取れる項目が見つかりませんでした。写真を明るい場所で、証明書いっぱいに撮り直すか、手で入力してください。";
+      ocrMsg.textContent = said.length || warn
+        ? (said.length ? "読み取り結果：" + said.join("、") + "。" : "") + warn + "証明書と見比べて、違っていれば直してください。"
+        : "読み取れる項目が見つかりませんでした。写真を明るい場所で、証明書いっぱいに、まっすぐ撮り直すか、手で入力してください。";
       ocrCands.innerHTML = r.cands.length ? `<span class="sub">読み取れた金額（タップで申告額に入れる）：</span>` + r.cands.map(v=>`<button type="button" class="btn ghost" data-v="${v}">${yen(v)}</button>`).join("") : "";
     }catch(err){
       ocrMsg.textContent = "読み取れませんでした（通信できないか、読み取り用のデータを読み込めなかった可能性があります）。手で入力してください。";
@@ -509,25 +519,51 @@ function viewMap(){
 function parseCert(raw){
   const lines = String(raw||"").normalize("NFKC").split(/\n+/).map(s=>s.replace(/\s+/g,"")).filter(Boolean);
   const all = lines.join("\n");
-  const D = "[-−–—ー‐‑]";
-  const yenOf = line => { const m=[...line.matchAll(/(\d{1,3}(?:,\d{3})+|\d+)円/g)]; return m.length ? Number(m[m.length-1][1].replace(/,/g,"")) : null; };
-  const find = re => { for (const l of lines){ if (re.test(l)){ const v = yenOf(l); if (v!=null) return v; } } return null; };
-  // 年間の見込み額（申告額）を先に、なければ今までの払込額（証明額）を見る
-  const rules = [
-    ["申告額","general", new RegExp("一般申告額|\\(a\\)"+D+"\\(b\\)")],
-    ["申告額","medical", new RegExp("介護医療申告額|\\(c\\)"+D+"\\(d\\)")],
-    ["申告額","pension", /個人年金申告額/],
-    ["証明額","general", new RegExp("一般証明額|\\(A\\)"+D+"\\(B\\)")],
-    ["証明額","medical", new RegExp("介護医療証明額|\\(C\\)"+D+"\\(D\\)")],
-    ["証明額","pension", /個人年金証明額|個人年金保険料控除証明額/],
-  ];
+  // 円の金額。文字認識は「円」を別の字に、位取りの「,」を「.」に読み違えることがあるので、ゆるく読む（1,000円以上だけ）
+  const re = /(\d{1,3}(?:[.,]\d{3})+|\d{4,})[円幅和田陣昌]/g;
+  const toks = [];
+  lines.forEach((l,i)=>{ for (const m of l.matchAll(re)){
+    const pre = l[m.index-1]; if (pre && /[\d.,]/.test(pre)) continue;
+    const v = Number(m[1].replace(/[.,]/g,"")); if (v>=1000) toks.push({v,i}); } });
+  // 「ご参考（12月分まで払い込んだ場合の申告額）」の欄があれば、その中の最初の金額が年間額。なければ証明額
+  const mk = lines.findIndex(l=>/申告額は|ご参考|本年末日|12月分までの/.test(l));
   let pick = null;
-  for (const [basis,deduct,re] of rules){ const v = find(re); if (v>0){ pick = {basis,deduct,amount:v}; break; } }
-  const regime = /旧(?:個人年金)?(?:生命)?保険料控除制度|旧制度/.test(all) ? "old" : /新(?:個人年金)?(?:生命)?保険料控除制度|新制度/.test(all) ? "new" : null;
-  const quake = /地震保険料控除証明書/.test(all);
-  const cands = [];
-  for (const l of lines){ for (const m of l.matchAll(/(\d{1,3}(?:,\d{3})+|\d+)円/g)){ const v = Number(m[1].replace(/,/g,"")); if (v>0 && !cands.includes(v)) cands.push(v); } }
-  return { regime, deduct: quake ? "quake" : (pick ? pick.deduct : null), amount: pick ? pick.amount : null, basis: pick ? pick.basis : null, cands: cands.slice(0,8) };
+  if (mk>=0){ const t = toks.find(t=>t.i>=mk); if (t) pick = {amount:t.v, basis:"申告額"}; }
+  else if (toks.length) pick = {amount:toks[0].v, basis:"証明額"};
+  const head = lines.slice(0,3).join("");
+  const seido = all.match(/適用制度[^\n]*/)?.[0] || "";
+  const regime = /旧(?:個人年金)?(?:生命)?保険料控除制度|旧制度/.test(all) || /旧/.test(seido) ? "old"
+    : /新(?:個人年金)?(?:生命)?保険料控除制度|新制度/.test(all) || /新/.test(seido) ? "new" : null;
+  const deduct = /地震保険料控除証明書/.test(all) ? "quake" : /個人年金/.test(head) ? "pension"
+    : (/介護医療/.test(head) && !/一般/.test(head)) ? "medical" : (toks.length || /生命保険料控除証明書/.test(all)) ? "general" : null;
+  const cands = []; toks.forEach(t=>{ if(!cands.includes(t.v)) cands.push(t.v); });
+  return { regime, deduct, amount: pick?pick.amount:null, basis: pick?pick.basis:null, cands: cands.slice(0,8) };
+}
+// 読み取りを何回かやった結果を、多数決でまとめる
+function mergeCerts(rs){
+  const votes = new Map(); rs.forEach(r=>{ if(r.amount!=null) votes.set(r.amount,(votes.get(r.amount)||0)+1); });
+  const top = [...votes.entries()].sort((a,b)=>b[1]-a[1]||b[0]-a[0])[0];
+  const major = key => { const c={}; rs.forEach(r=>{ if(r[key]) c[r[key]]=(c[r[key]]||0)+1; }); const e=Object.entries(c).sort((a,b)=>b[1]-a[1])[0]; return e?e[0]:null; };
+  const cc = new Map(); rs.forEach(r=>r.cands.forEach(v=>cc.set(v,(cc.get(v)||0)+1)));
+  return { regime: major("regime"), deduct: major("deduct"), amount: top?top[0]:null, votes: top?top[1]:0, total: rs.length,
+    basis: top ? (rs.find(r=>r.amount===top[0])||{}).basis : null,
+    cands: [...cc.entries()].sort((a,b)=>b[1]-a[1]||b[0]-a[0]).map(e=>e[0]).slice(0,8) };
+}
+// 白黒にして濃淡をはっきりさせる（読み取りの精度を上げるため）
+function grayStretch(dataUrl){
+  return new Promise((res,rej)=>{
+    const img = new Image();
+    img.onload = ()=>{ const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+      const x = c.getContext("2d"); x.drawImage(img,0,0); const d = x.getImageData(0,0,c.width,c.height), p = d.data, h = new Uint32Array(256);
+      for (let i=0;i<p.length;i+=4){ const g = (p[i]*299+p[i+1]*587+p[i+2]*114)/1000|0; p[i]=g; h[g]++; }
+      const n = p.length/4; let lo=0, hi=255, acc=0;
+      for (let k=0;k<256;k++){ acc+=h[k]; if(acc>n*0.01){ lo=k; break; } }
+      acc=0; for (let k=255;k>=0;k--){ acc+=h[k]; if(acc>n*0.01){ hi=k; break; } }
+      const sc = 255/Math.max(1,hi-lo);
+      for (let i=0;i<p.length;i+=4){ const v = Math.max(0,Math.min(255,(p[i]-lo)*sc)); p[i]=p[i+1]=p[i+2]=v; }
+      x.putImageData(d,0,0); res(c.toDataURL("image/jpeg",0.92)); };
+    img.onerror = rej; img.src = dataUrl;
+  });
 }
 function loadOcr(){
   if (window.Tesseract) return Promise.resolve(window.Tesseract);
