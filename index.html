@@ -77,7 +77,9 @@ legend{font-weight:700;font-size:1rem;margin:22px 0 8px;padding:0}
 .f span{display:block;font-size:.8rem;color:var(--sub);margin-bottom:3px}
 .f input,.f select,.f textarea{width:100%;background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;min-height:44px}
 .f textarea{min-height:80px}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 10px}
+.two>.f{min-width:0}
+.f input[type=date]{min-width:0;max-width:100%}
 .hint{background:var(--ai-soft);color:var(--ai);border-radius:var(--r-sm);padding:10px 12px;font-size:.85rem;margin:0 0 12px}
 .saved{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);
   font-size:.8rem;padding:4px 12px;border-radius:999px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:20}
