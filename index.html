@@ -194,6 +194,10 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;"
 const yen = n => (Math.round(Number(n)||0)).toLocaleString("ja-JP")+"円";
 const member = id => S.members.find(m=>m.id===id);
 const mname = id => member(id)?.name || "未設定";
+/* 数字の入力欄に3桁ごとのカンマを付ける（保存する値はカンマなし） */
+const fmtDigits = v => String(v==null?"":v).replace(/[^\d]/g,"").replace(/\B(?=(\d{3})+(?!\d))/g,",");
+const fmtDec = v => { const [i,...r] = String(v==null?"":v).replace(/[^\d.]/g,"").split("."); return i.replace(/\B(?=(\d{3})+(?!\d))/g,",") + (r.length ? "."+r.join("") : ""); };
+const COMMA_FIELDS = { premium:fmtDigits, annualOverride:fmtDigits, certAmount:fmtDigits, premiumUsd:fmtDec };
 function annual(p){
   if (p.annualOverride !== "" && p.annualOverride != null) return Number(p.annualOverride)||0;
   const v = p.currency==="USD" ? (Number(p.premiumUsd)||0)*(Number(p.fxRate)||0) : (Number(p.premium)||0);
@@ -366,16 +370,16 @@ function viewPolicy(id, mode){
         <label class="f"><span>払い方</span>${sel("freq",p.freq,Object.entries(FREQ))}</label>
       </div>
       <div id="jpyBox" ${p.currency==="USD"?"hidden":""}>
-        <label class="f"><span>保険料（円）</span><input name="premium" value="${esc(p.premium)}" inputmode="numeric"></label>
+        <label class="f"><span>保険料（円）</span><input name="premium" value="${esc(fmtDigits(p.premium))}" inputmode="numeric"></label>
       </div>
       <div id="usdBox" ${p.currency==="USD"?"":"hidden"}>
         <div class="two">
-          <label class="f"><span>保険料（米ドル）</span><input name="premiumUsd" value="${esc(p.premiumUsd)}" inputmode="decimal"></label>
+          <label class="f"><span>保険料（米ドル）</span><input name="premiumUsd" value="${esc(fmtDec(p.premiumUsd))}" inputmode="decimal"></label>
           <label class="f"><span>換算レート（1ドル＝円）</span><input name="fxRate" value="${esc(p.fxRate)}" inputmode="decimal"></label>
         </div>
         <p class="note">円の額は「ドル×レート」の概算で、1回あたり <b class="num" id="usdYen"></b> です。ドル円で毎月変わります。控除証明書にレートが書かれていれば、それを入れてください。年末調整では、証明書の申告額が使われます。</p>
       </div>
-      <label class="f"><span>年間保険料（自動計算 <b class="num" id="autoAnnual">${yen(annual({...p,annualOverride:""}))}</b>。違う場合だけ入力）</span><input name="annualOverride" value="${esc(p.annualOverride)}" inputmode="numeric"></label>
+      <label class="f"><span>年間保険料（自動計算 <b class="num" id="autoAnnual">${yen(annual({...p,annualOverride:""}))}</b>。違う場合だけ入力）</span><input name="annualOverride" value="${esc(fmtDigits(p.annualOverride))}" inputmode="numeric"></label>
     </fieldset>
     <fieldset><legend>保障内容</legend>
       <div id="covs"></div>
@@ -394,7 +398,7 @@ function viewPolicy(id, mode){
         <label class="f"><span>控除の区分</span>${sel("deduct",p.deduct,Object.entries(DEDUCT))}</label>
         <label class="f"><span>制度</span>${sel("regime",p.regime,[["new","新制度（2012年以降の契約）"],["old","旧制度（2011年以前の契約）"]])}</label>
       </div>
-      <label class="f"><span>今年の控除証明書の申告額（届いたら入力）</span><input name="certAmount" value="${esc(p.certAmount)}" inputmode="numeric"></label>
+      <label class="f"><span>今年の控除証明書の申告額（届いたら入力）</span><input name="certAmount" value="${esc(fmtDigits(p.certAmount))}" inputmode="numeric"></label>
       <div class="actions ed">
         <label class="btn ghost">控除証明書の写真から読み取る<input type="file" accept="image/*" id="ocr" hidden></label>
       </div>
@@ -413,6 +417,12 @@ function viewPolicy(id, mode){
   form.addEventListener("input", e=>{
     if(!edit) return;
     const t = e.target; if(!t.name || t.name.startsWith("cov")) return;
+    if (COMMA_FIELDS[t.name] && t.type!=="select-one"){
+      const pos = t.selectionStart, keep = t.value.slice(0, pos == null ? t.value.length : pos).replace(/[^\d.]/g,"").length;
+      t.value = COMMA_FIELDS[t.name](t.value);
+      let n = 0, c = 0; while (c < t.value.length && n < keep){ if (/[\d.]/.test(t.value[c])) n++; c++; }
+      try{ t.setSelectionRange(c, c); }catch(_){}
+    }
     p[t.name] = ["premium","annualOverride","certAmount"].includes(t.name) ? t.value.replace(/[^\d]/g,"")
       : ["premiumUsd","fxRate"].includes(t.name) ? t.value.replace(/[^\d.]/g,"") : t.value;
     if (t.name==="name") app.querySelector("h1").textContent = p.name || "保険の登録";
@@ -467,7 +477,7 @@ function viewPolicy(id, mode){
 
   // 控除証明書の写真から、制度・区分・申告額を読み取る
   const ocrMsg = document.getElementById("ocrMsg"), ocrCands = document.getElementById("ocrCands");
-  const setField = (name,val)=>{ const el = form.elements[name]; if(!el) return; el.value = val; p[name] = name==="certAmount" ? String(val).replace(/[^\d]/g,"") : el.value; };
+  const setField = (name,val)=>{ const el = form.elements[name]; if(!el) return; el.value = COMMA_FIELDS[name] ? COMMA_FIELDS[name](val) : val; p[name] = name==="certAmount" ? String(val).replace(/[^\d]/g,"") : el.value; };
   document.getElementById("ocr").addEventListener("change", async e=>{
     const f = (e.target.files||[])[0]; e.target.value=""; if(!f) return;
     ocrCands.innerHTML = ""; document.getElementById("ocrRaw").hidden = true;
